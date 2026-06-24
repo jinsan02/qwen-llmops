@@ -38,7 +38,13 @@ def quantize(model_path: str, output_path: str) -> None:
 
     # int8 dynamic quantization 설정
     # avx512_vnni: RPi5(ARM64)는 지원 안 함 → arm64 or avx2 사용
-    qconfig = AutoQuantizationConfig.arm64(is_static=False, per_channel=False)
+    #
+    # ⚠️ 실측 경고(Qwen2.5-1.5B, 2026-06-25): dynamic INT8은 per_channel True/False
+    #    모두 생성을 붕괴시킴(raw 통과율 0.000, 토큰 반복 degenerate). 0.5B는 동작했으나
+    #    1.5B는 dynamic으로 불가. 동작시키려면 is_static=True + calibration set(정적 양자화)
+    #    필요. 단, 정적 INT8도 ~1.8GB로 GGUF Q4_K_M(1.06GB, raw 0.969)보다 크고 느림 →
+    #    RPi5 배포는 GGUF Q4_K_M 권장(scripts/export_qwen_gguf.py).
+    qconfig = AutoQuantizationConfig.arm64(is_static=False, per_channel=True)
 
     quantizer = ORTQuantizer.from_pretrained(model)
     quantizer.quantize(
