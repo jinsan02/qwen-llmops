@@ -1,0 +1,32 @@
+services:
+  db:
+    image: redis:7.2-alpine
+    container_name: qwen-db
+    restart: always
+    ports:
+      - "6380:6379"
+    networks:
+      - qwen-network
+
+  ai-qwen:
+    build:
+      context: .
+      target: cpu-runtime
+    container_name: qwen-ai
+    restart: always
+    depends_on:
+      - db
+    env_file: .env
+    environment:
+      - REDIS_HOST=db
+      - SLM_MIN_INTERVAL_MS=5000
+      - ORT_USE_GPU=0
+    volumes:
+      - ./volumes/models:/app/models
+    command: ["python", "service/qwen_service.py"]
+    networks:
+      - qwen-network
+
+networks:
+  qwen-network:
+    driver: bridge

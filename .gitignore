@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.onnx
+*.onnx.data
+volumes/models/
+docs/*.html
+eval/qwen_eval_dataset.json
+reports/
+*.json.bak
+.DS_Store

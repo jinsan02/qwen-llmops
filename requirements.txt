@@ -1,0 +1,11 @@
+onnxruntime-gpu==1.18.0
+transformers>=4.46.0,<4.48.0
+tokenizers>=0.20.0,<0.22.0
+numpy==1.26.4
+redis==5.0.3
+huggingface-hub>=0.24.0,<1.0
+regex>=2022.1.18
+optimum>=1.17.0,<1.18.0
+psutil>=5.9.0
+# Task C (GGUF path): uncomment after Task B latency results confirm GGUF advantage
+# llama-cpp-python>=0.3.0
