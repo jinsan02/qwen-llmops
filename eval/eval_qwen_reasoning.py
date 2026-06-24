@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import datetime
+from html import escape as html_escape
 
 # Windows cp949 콘솔에서 한글/특수문자 출력 깨짐 방지
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
@@ -80,6 +81,32 @@ def _score_format_complete(reason: str) -> tuple[bool, str]:
     return False, f"미완결/비구조적: {s!r}"
 
 
+# ── raw 모델 응답 파서 (가드레일 보정 이전) ─────────────────────────────────
+
+def _parse_raw_response(raw: str) -> tuple[str, str, float]:
+    """모델 raw 응답 문자열에서 risk_level / reason / risk_score를 추출.
+
+    evaluate()의 vital_override·알람제거 후처리가 적용되기 전의 원본을 본다.
+    JSON 파싱 실패 시 정규식으로 best-effort 복구.
+    """
+    if not raw:
+        return "", "", -1.0
+    s = raw.strip()
+    try:
+        obj = json.loads(s)
+        return (str(obj.get("risk_level", "")),
+                str(obj.get("reason", "")),
+                float(obj.get("risk_score", -1.0)))
+    except Exception:
+        pass
+    lvl = re.search(r'"risk_level"\s*:\s*"([^"]*)"', s)
+    rsn = re.search(r'"reason"\s*:\s*"([^"]*)"', s)
+    sco = re.search(r'"risk_score"\s*:\s*([0-9.]+)', s)
+    return (lvl.group(1) if lvl else "",
+            rsn.group(1) if rsn else "",
+            float(sco.group(1)) if sco else -1.0)
+
+
 # ── 케이스 평가 ───────────────────────────────────────────────────────────
 
 def _evaluate_case(case: dict, qwen_logic=None) -> dict:
@@ -96,8 +123,10 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
         "score": round(score, 4),
         "breakdown": breakdown,
         "criteria": {},
-        "pass": True,
+        "pass": True,            # Track A: 응급지수 알고리즘 (score 범위 + m5_called)
         "failures": [],
+        "m5_pass": None,         # Track B: 호출된 모델 raw 추론 (None=대상아님/미실행)
+        "m5_failures": [],
         # 정확도/오탐율 측정용: 독립 정답(ground_truth) vs 시스템 결정(m5_called)
         "ground_truth": case.get("ground_truth_emergency"),
         "predicted": m5_called_actual,
@@ -120,57 +149,54 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
             f"m5_called={m5_called_actual} (expected={exp['m5_called']}, score={score:.4f})"
         )
 
-    # ── M5 추론 필요 없는 케이스 → 점수 검증만 ──────────────────────────
+    # ── M5 추론 필요 없는 케이스 → Track A(점수)만, Track B 대상 아님 ────────
     if not m5_called_actual:
         for name in ("numeric_match", "label_consistency", "vital_override", "format_complete"):
-            results["criteria"][name] = {"pass": True, "msg": "M5 미호출 — skip"}
+            results["criteria"][name] = {"pass": None, "msg": "M5 미호출 — 대상 아님"}
         return results
 
-    # ── M5 추론 실행 (모델 있을 때만) ─────────────────────────────────────
+    # ── Track B: 모델 미로드면 raw 추론 평가 불가 (Track A는 영향 없음) ──────
     if qwen_logic is None:
         for name in ("numeric_match", "label_consistency", "vital_override", "format_complete"):
-            results["criteria"][name] = {"pass": True, "msg": "mock 모드 — skip"}
+            results["criteria"][name] = {"pass": None, "msg": "mock 모드 — 모델 미실행"}
         return results
 
+    # ── M5 추론 실행 ─────────────────────────────────────────────────────
     try:
         eval_result = qwen_logic.evaluate(inp)
     except Exception as exc:
-        results["pass"] = False
-        results["failures"].append(f"QwenLogic.evaluate 오류: {exc}")
+        results["m5_pass"] = False
+        results["m5_failures"].append(f"QwenLogic.evaluate 오류: {exc}")
         return results
 
-    reason     = eval_result.get("qwen_reason") or eval_result.get("qwen_response") or ""
-    risk_level = eval_result.get("risk_level", "")
-    results["risk_level"]  = risk_level
-    results["qwen_reason"] = reason
+    # raw(가드레일 이전) vs corrected(후처리) 둘 다 보존
+    raw_resp = eval_result.get("qwen_response") or ""
+    raw_level, raw_reason, raw_score = _parse_raw_response(raw_resp)
+    results["raw_response"]       = raw_resp
+    results["raw_risk_level"]     = raw_level
+    results["raw_reason"]         = raw_reason
+    results["raw_risk_score"]     = raw_score
+    results["corrected_reason"]   = eval_result.get("qwen_reason") or ""
+    results["corrected_level"]    = eval_result.get("risk_level", "")
+    results["vital_override_hit"] = bool(eval_result.get("vital_override"))
+    results["qwen_infer_ms"]      = eval_result.get("qwen_infer_ms")
+    results["slm_mode"]           = eval_result.get("slm_mode")
 
-    # 기준 1: 수치 일치
-    ok, msg = _score_numeric_match(reason, exp)
-    results["criteria"]["numeric_match"] = {"pass": ok, "msg": msg}
-    if not ok:
-        results["pass"] = False
-        results["failures"].append(f"[numeric_match] {msg}")
-
-    # 기준 2: 라벨 정합성
-    ok, msg = _score_label_consistency(reason, exp)
-    results["criteria"]["label_consistency"] = {"pass": ok, "msg": msg}
-    if not ok:
-        results["pass"] = False
-        results["failures"].append(f"[label_consistency] {msg}")
-
-    # 기준 3: vital_override
-    ok, msg = _score_vital_override(reason, risk_level, exp)
-    results["criteria"]["vital_override"] = {"pass": ok, "msg": msg}
-    if not ok:
-        results["pass"] = False
-        results["failures"].append(f"[vital_override] {msg}")
-
-    # 기준 4: 포맷 완결
-    ok, msg = _score_format_complete(reason)
-    results["criteria"]["format_complete"] = {"pass": ok, "msg": msg}
-    if not ok:
-        results["pass"] = False
-        results["failures"].append(f"[format_complete] {msg}")
+    # ── Track B 채점: 가드레일 보정 이전 raw 출력 기준 ──────────────────────
+    # (corrected가 아니라 raw를 채점해야 프롬프트/chat_template 효과가 측정됨)
+    results["m5_pass"] = True
+    scorers = (
+        ("numeric_match",      lambda: _score_numeric_match(raw_reason, exp)),
+        ("label_consistency",  lambda: _score_label_consistency(raw_reason, exp)),
+        ("vital_override",     lambda: _score_vital_override(raw_reason, raw_level, exp)),
+        ("format_complete",    lambda: _score_format_complete(raw_reason)),
+    )
+    for name, fn in scorers:
+        ok, msg = fn()
+        results["criteria"][name] = {"pass": ok, "msg": msg}
+        if not ok:
+            results["m5_pass"] = False
+            results["m5_failures"].append(f"[{name}] {msg}")
 
     return results
 
@@ -234,6 +260,73 @@ def _print_metrics(cm: dict) -> None:
     print()
 
 
+def _m5_summary(all_results: list[dict]) -> dict:
+    """Track B: M5 호출된 케이스의 raw 추론 채점 집계."""
+    called = [r for r in all_results if r.get("m5_pass") is not None]
+    passed = [r for r in called if r["m5_pass"]]
+    crit_fail = {"numeric_match": 0, "label_consistency": 0, "vital_override": 0, "format_complete": 0}
+    for r in called:
+        for name, c in r.get("criteria", {}).items():
+            if c.get("pass") is False:
+                crit_fail[name] = crit_fail.get(name, 0) + 1
+    return {
+        "called": len(called), "passed": len(passed),
+        "fail": len(called) - len(passed),
+        "pass_rate": len(passed) / len(called) if called else 0.0,
+        "crit_fail": crit_fail,
+    }
+
+
+def _print_m5_report(all_results: list[dict]) -> None:
+    s = _m5_summary(all_results)
+    if not s["called"]:
+        return
+    print("=" * 45)
+    print("  Track B — 호출된 모델 raw 추론 평가")
+    print("=" * 45)
+    print(f"  M5 호출 {s['called']}케이스 · raw PASS {s['passed']} / FAIL {s['fail']} "
+          f"(통과율 {s['pass_rate']:.3f})")
+    print(f"  기준별 실패: numeric={s['crit_fail']['numeric_match']} "
+          f"label={s['crit_fail']['label_consistency']} "
+          f"vital_ov={s['crit_fail']['vital_override']} "
+          f"format={s['crit_fail']['format_complete']}")
+    for r in all_results:
+        if r.get("m5_pass") is False:
+            print(f"  FAIL [{r['id']}] raw_level={r.get('raw_risk_level','')!r} "
+                  f"raw_reason={ (r.get('raw_reason','') or '')[:60]!r}")
+            for f in r["m5_failures"]:
+                print(f"        {f}")
+    print()
+
+
+def _dump_raw_responses(all_results: list[dict], report_dir: str) -> str:
+    """Track B 데이터셋: 케이스별 raw 응답 전문을 JSON으로 저장."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out_dir = os.path.join(root, "reports")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"qwen_responses_{datetime.date.today():%Y%m%d}.json")
+    items = []
+    for r in all_results:
+        if r.get("m5_pass") is None:
+            continue
+        items.append({
+            "id": r["id"], "category": r["category"], "score": r["score"],
+            "raw_response": r.get("raw_response", ""),
+            "raw_risk_level": r.get("raw_risk_level", ""),
+            "raw_reason": r.get("raw_reason", ""),
+            "raw_risk_score": r.get("raw_risk_score"),
+            "corrected_reason": r.get("corrected_reason", ""),
+            "corrected_level": r.get("corrected_level", ""),
+            "vital_override_hit": r.get("vital_override_hit", False),
+            "qwen_infer_ms": r.get("qwen_infer_ms"),
+            "m5_pass": r.get("m5_pass"),
+            "m5_failures": r.get("m5_failures", []),
+        })
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+    return path
+
+
 def _print_report(all_results: list[dict]) -> None:
     by_cat: dict[str, list] = {c: [] for c in _CATEGORIES}
     for r in all_results:
@@ -261,8 +354,8 @@ def _print_report(all_results: list[dict]) -> None:
             print(f"  FAIL  [{r['id']}]  score={r['score']:.4f}")
             for f in r["failures"]:
                 print(f"         {f}")
-            if r.get("qwen_reason"):
-                print(f"         reason: {r['qwen_reason'][:120]!r}")
+            if r.get("raw_reason"):
+                print(f"         raw_reason: {r['raw_reason'][:120]!r}")
             print()
 
 
@@ -281,16 +374,25 @@ def _write_html(all_results: list[dict], report_dir: str, cm: dict = None) -> st
         cases = by_cat.get(cat, [])
         for r in cases:
             status_cell = '<td style="color:green">PASS</td>' if r["pass"] else '<td style="color:red">FAIL</td>'
+            # Track B (모델 raw 추론) 상태
+            if r.get("m5_pass") is None:
+                m5_cell = "<td>—</td>"
+            elif r["m5_pass"]:
+                m5_cell = '<td style="color:green">raw PASS</td>'
+            else:
+                m5_cell = '<td style="color:red" title="{}">raw FAIL</td>'.format(
+                    html_escape("; ".join(r.get("m5_failures", []))))
             criteria_cells = ""
             for cname in ("numeric_match", "label_consistency", "vital_override", "format_complete"):
                 c = r.get("criteria", {}).get(cname, {})
-                if c.get("msg") == "M5 미호출 — skip" or c.get("msg") == "mock 모드 — skip":
+                if c.get("pass") is None:
                     criteria_cells += "<td>—</td>"
                 elif c.get("pass"):
                     criteria_cells += '<td style="color:green">✓</td>'
                 else:
-                    criteria_cells += '<td style="color:red" title="{}">✗</td>'.format(c.get("msg", ""))
-            reason_html = (r.get("qwen_reason") or "")[:100]
+                    criteria_cells += '<td style="color:red" title="{}">✗</td>'.format(
+                        html_escape(c.get("msg", "")))
+            reason_html = html_escape((r.get("raw_reason") or "")[:100])
             gt = r.get("ground_truth")
             pred = r.get("predicted")
             gt_cell = "—" if gt is None else ("응급" if gt else "정상")
@@ -310,6 +412,7 @@ def _write_html(all_results: list[dict], report_dir: str, cm: dict = None) -> st
                 f"<td>{r['id']}</td><td>{r['category']}</td>"
                 f"<td>{r['score']:.4f}</td>"
                 f"<td>{gt_cell}</td>{verdict}"
+                f"{m5_cell}"
                 f"{criteria_cells}"
                 f"<td>{reason_html}</td></tr>\n"
             )
@@ -352,12 +455,14 @@ def _write_html(all_results: list[dict], report_dir: str, cm: dict = None) -> st
 <p><b>{summary}</b></p>
 {metrics_html}
 <h3>케이스별 상세</h3>
+<p class="sub">결과=Track A(알고리즘 score) · 모델raw=Track B(가드레일 이전 모델 추론) · ✓✗는 raw 기준 채점</p>
 <table>
 <tr>
   <th>결과</th><th>ID</th><th>카테고리</th><th>score</th>
   <th>정답(GT)</th><th>판정</th>
+  <th>모델raw</th>
   <th>numeric</th><th>label</th><th>vital_ov</th><th>format</th>
-  <th>reason (앞100자)</th>
+  <th>raw_reason (앞100자)</th>
 </tr>
 {rows_html}
 </table>
@@ -414,9 +519,15 @@ def main():
     # 콘솔 출력
     _print_report(all_results)
 
-    # 정확도/오탐율/미탐율 (ground_truth 라벨 기반)
+    # Track A: 정확도/오탐율/미탐율 (ground_truth 라벨 기반)
     cm = _confusion(all_results)
     _print_metrics(cm)
+
+    # Track B: 호출된 모델 raw 추론 평가 + raw 응답 덤프
+    _print_m5_report(all_results)
+    if any(r.get("m5_pass") is not None for r in all_results):
+        json_path = _dump_raw_responses(all_results, args.report)
+        print(f"[INFO] raw 응답 데이터셋: {json_path}")
 
     # HTML 리포트 저장
     html_path = _write_html(all_results, args.report, cm)
