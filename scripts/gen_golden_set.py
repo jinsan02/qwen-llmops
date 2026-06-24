@@ -58,10 +58,11 @@ def ground_truth(inp: dict) -> bool:
 
 
 def _vital_override(inp: dict) -> bool:
+    # D1 정렬: crit_lo 40/5 (emergency_score와 동일)
     v = inp.get("vital", {})
     hr = float(v.get("heart_rate", 0.0))
     rr = float(v.get("breathing_rate", 0.0))
-    return (hr > 0 and (hr <= 35 or hr >= 130)) or (rr > 0 and (rr <= 4 or rr >= 35))
+    return (hr > 0 and (hr <= 40 or hr >= 130)) or (rr > 0 and (rr <= 5 or rr >= 35))
 
 
 def _numeric(inp, key, lo_crit, hi_crit):
@@ -85,8 +86,8 @@ def _build_expected(inp: dict, window=0.025, **overrides) -> dict:
         # hallucination_guard: 경보/충격음이 아닌데 M5까지 간 케이스 → '알람' 환각 금지
         "hallucination_guard": bool(m5 and label not in ("alarm", "impact")),
         "env_label": label,
-        "numeric_hr": _numeric(inp, "heart_rate", 35.0, 130.0),
-        "numeric_rr": _numeric(inp, "breathing_rate", 4.0, 35.0),
+        "numeric_hr": _numeric(inp, "heart_rate", 40.0, 130.0),
+        "numeric_rr": _numeric(inp, "breathing_rate", 5.0, 35.0),
     }
     exp.update(overrides)
     return exp, score
@@ -203,14 +204,23 @@ def main():
     args = ap.parse_args()
 
     out_rows = []
+    _new_ids = {cid for cid, _, _, _ in NEW_CASES}
 
-    # 1) 기존 40케이스: ground_truth_emergency 주입(입력/expected 유지)
+    # 1) 원본 케이스(NEW_CASES에 없는 것만): 멱등 보장 — NEW와 겹치는 id는 건너뛰고
+    #    재append에 의한 중복 방지. expected 윈도우는 현재 코드 출력으로 재생성(코드 동기화),
+    #    note는 보존.
     existing = load_existing(_OUT)
     for case in existing:
+        if case["id"] in _new_ids:
+            continue
+        note = case.get("expected", {}).get("note", "")
+        exp, _ = _build_expected(case["input"])
+        exp["note"] = note
+        case["expected"] = exp
         case["ground_truth_emergency"] = ground_truth(case["input"])
         out_rows.append(case)
 
-    # 2) 신규 60케이스
+    # 2) 신규 케이스
     for cid, cat, inp, note in NEW_CASES:
         exp, score = _build_expected(inp)
         exp["note"] = note

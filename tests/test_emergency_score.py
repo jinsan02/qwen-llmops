@@ -93,7 +93,7 @@ print("[3] M2 심박(HR) 경계값")
 cases_hr = [
     (0.0,   0.0,   0.0,   "HR=0 (no-signal)"),
     (_HR_CRIT_LO + 0.1, 0.0,  0.17, "HR 위기 하한 직상 → warning 진입"),
-    (_HR_CRIT_LO,       0.63, 0.67, "HR 위기 하한(35) → vital=1.0 → vital_bypass → score=0.65"),
+    (_HR_CRIT_LO,       0.63, 0.67, "HR 위기 하한(40, D1) → vital=1.0 → vital_bypass → score=0.65"),
     (_HR_WARN_LO - 0.1, 0.14, 0.18, "HR 경고 하한(55) 미만 → vital=0.55, score~0.165"),
     (_HR_WARN_LO,       0.14, 0.18, "HR=55 정확히 → _vital_component val<=warn_lo True → vital=0.55"),
     (75.0,              0.0,  0.01, "HR 정상(75) → vital=0"),
@@ -110,7 +110,7 @@ print("[4] M2 호흡수(RR) 경계값")
 
 cases_rr = [
     (0.0,              0.0,  0.01, "RR=0 (no-signal)"),
-    (_RR_CRIT_LO,      0.63, 0.67, "RR 위기 하한(4) → vital=1.0 → vital_bypass → score=0.65"),
+    (_RR_CRIT_LO,      0.63, 0.67, "RR 위기 하한(5, D1) → vital=1.0 → vital_bypass → score=0.65"),
     (_RR_WARN_LO - 0.1,0.14, 0.18, "RR 경고 하한 미만 → vital=0.55"),
     (_RR_WARN_LO,      0.14, 0.18, "RR=10 정확히 → _vital_component val<=warn_lo True → vital=0.55"),
     (16.0,             0.0,  0.01, "RR 정상(16) → vital=0"),
@@ -238,6 +238,40 @@ if VERBOSE:
 # alarm(0.9) * env_conf(1.0) * _conf_weight(0.0)=0.5 = 0.45 → score = 0.45*0.15 = 0.0675
 s_noaudio, _ = compute_emergency_score(_mk_conf(label="alarm", lconf=1.0, sound_conf=0.0))
 check("sound alarm infer_conf=0.0 → _conf_weight=0.5 → 절반 감쇠", s_noaudio, _, score_lo=0.06, score_hi=0.08)
+
+
+# ── D1/D2/D3 결함 수정 회귀 ─────────────────────────────────────────────────
+print("[10] D1/D2/D3 결함 수정 회귀")
+
+# D1: crit_lo 40/5 — HR=36·RR=5 직상값이 이제 crit→vital_bypass (이전 경고 0.165 미탐)
+s, bd = compute_emergency_score(_mk(hr=36))
+check("D1 HR=36 → crit(40 이하) → vital_bypass score≥0.6", s, bd, score_lo=0.63, score_hi=0.67)
+s, bd = compute_emergency_score(_mk(rr=5))
+check("D1 RR=5 → crit(5 이하) → vital_bypass score≥0.6", s, bd, score_lo=0.63, score_hi=0.67)
+# D1 경계 반대편: HR=41은 여전히 경고(정상 아님, 과승급 아님)
+s, bd = compute_emergency_score(_mk(hr=41))
+check("D1 HR=41 → 경고(0.55) 유지, bypass 아님", s, bd, score_lo=0.14, score_hi=0.18)
+
+# D2: 확정 낙상(≥0.8) + 경보/충격음(conf≥0.8) → conf 감쇠 무관 fall_hazard_bypass
+s, bd = compute_emergency_score(_mk(fall=1.0, label="alarm", conf=1.0))
+check("D2 fall=1.0+alarm → fall_hazard_bypass score≥0.6", s, bd, score_lo=0.60, score_hi=1.0)
+if bd.get("fall_hazard_bypass"):
+    PASS += 1
+    VERBOSE and print("  PASS  D2 fall_hazard_bypass 플래그 set")
+else:
+    FAIL += 1
+    print("  FAIL  D2 fall_hazard_bypass 플래그 미set")
+# D2 비대상: 낙상만(보강 음향 없음)은 에스컬레이션 안 됨
+s, bd = compute_emergency_score(_mk(fall=1.0, label="silence"))
+check("D2 fall=1.0 단독(음향 없음) → 0.40, bypass 아님", s, bd, score_lo=0.38, score_hi=0.42)
+
+# D3: composite 부스트는 단일 피크 ≥0.70 필요 — 전부 중등도면 미발동
+# fall=0.6(0.6)+RR=24(0.55)+impact(0.65): 피크 0.65 < 0.70 → 부스트 없음 → 0.6 미만
+s, bd = compute_emergency_score(_mk(fall=0.6, rr=24, label="impact", conf=1.0))
+check("D3 중등도 3도메인(피크<0.70) → 부스트 미발동, score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
+# D3 대조: 피크 ≥0.70(alarm 0.9) 있으면 부스트 정상 발동
+s, bd = compute_emergency_score(_mk(fall=0.6, hr=50, label="alarm", conf=1.0))
+check("D3 피크≥0.70(alarm) 포함 → composite 부스트 발동 score≥0.6", s, bd, score_lo=0.60, score_hi=1.0)
 
 
 # ── 결과 ────────────────────────────────────────────────────────────────────

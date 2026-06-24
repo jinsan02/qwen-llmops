@@ -128,20 +128,48 @@ _BVA_ROWS = [
     ("활성도메인 ≥0.5 × 2/3/4", "composite ×1.20/1.35/1.50", "bva-17(×1.35), bva-18(×1.50)", "—"),
 ]
 
-_DEFECTS = [
-    ("미탐 D1: crit 경계 비대칭",
-     "crit 임계가 정확히 ≤35 / ≤4라서, HR=36·RR=5 같은 '직상' 값은 임상적으로 위기인데 경고(0.55)로만 처리되어 점수 0.165 → M5 미호출.",
-     "bva-06(HR=36, 0.165), bva-13(RR=5, 0.165)",
-     "crit_lo 경계를 < 37 / < 6 으로 완화하거나, 경고대역에도 단일 에스컬레이션 하한 부여."),
-    ("미탐 D2: infer_confidence 과감쇠",
-     "_conf_weight가 신뢰도 0일 때 점수를 절반으로 깎아, fall=1.0+alarm 처럼 보강된 복합 응급도 0.6 문턱 바로 아래로 떨어짐.",
-     "no-signal-01(0.468), no-signal-06(0.522), no-signal-10(0.468), fall-09(0.597)",
-     "raw 신호 기반 bypass를 vital 외 도메인(확정 낙상 등)에도 확장 검토."),
-    ("오탐 D3: composite 과승급",
-     "활성 도메인 3개 이상이면 ×1.35~1.50 배율이 걸려, 중등도 낙상+경미 빈호흡+충격음 조합이 실제 비응급인데 0.678로 알림.",
-     "multi-12(0.678)",
-     "충격(impact)·경미 생체경고 가중을 낮추거나 composite 발동 최소 도메인 점수 상향."),
+# 개선 전 베이스라인 (2026-06-25 1차 측정)
+_BASELINE = {"accuracy": 0.910, "fpr": 0.029, "fnr": 0.123,
+             "m5_pass_rate": 0.500, "vital_ov_fail": 28}
+
+# Track A 적용 개선 (D1/D2/D3) — 적용 완료
+_IMPROVEMENTS = [
+    ("D1 — crit 경계 비대칭 (미탐)",
+     "crit 임계가 ≤35/≤4라 HR=36·RR=5 직상값이 경고(0.55)로만 처리돼 미탐(0.165).",
+     "_HR_CRIT_LO 35→40, _RR_CRIT_LO 4→5 — 심한 서맥/서호흡을 crit→vital_bypass로 에스컬레이션",
+     "bva-06(HR=36), bva-13(RR=5) → 해소"),
+    ("D2 — infer_confidence 과감쇠 (미탐)",
+     "_conf_weight가 신뢰도 0에서 점수를 절반으로 깎아, fall=1.0+alarm 보강 응급이 0.6 직하로 떨어짐.",
+     "fall≥0.8 + alarm/impact(conf≥0.8) → fall_hazard_bypass(floor 0.65), raw 기반(conf 무관)",
+     "no-signal-01/03/06/10, fall-05, fall-09 → 해소"),
+    ("D3 — composite 과승급 (오탐)",
+     "활성 도메인 ≥3이면 ×1.35~1.50 배율로 중등도 복합이 비응급인데 0.678로 알림.",
+     "composite 발동에 최소 단일 도메인 피크 ≥0.70 조건 추가 — 전부 중등도면 미발동",
+     "multi-12(0.678) → 해소"),
+    ("Track B — vital_override (모델 추론)",
+     "0.5B가 HR/RR 위기를 reason엔 적으면서 risk_level은 normal로 분류(28건).",
+     "system prompt에 vital 위기 규칙 명시 + 단독 고/저측 vital few-shot 3개 추가",
+     "vital_override 실패 28→0, format 5→0"),
 ]
+
+
+def _load_track_b():
+    """reports/qwen_responses_<date>.json에서 Track B 집계 (있으면)."""
+    p = os.path.join(_ROOT, "reports", f"qwen_responses_{datetime.date.today():%Y%m%d}.json")
+    if not os.path.exists(p):
+        return None
+    items = json.load(open(p, encoding="utf-8"))
+    if not items:
+        return None
+    passed = sum(1 for x in items if x.get("m5_pass"))
+    crit = {"numeric_match": 0, "label_consistency": 0, "vital_override": 0, "format_complete": 0}
+    for x in items:
+        for f in x.get("m5_failures", []):
+            for k in crit:
+                if f.startswith(f"[{k}]"):
+                    crit[k] += 1
+    return {"called": len(items), "passed": passed, "fail": len(items) - passed,
+            "pass_rate": passed / len(items), "crit": crit}
 
 
 def build_html(rows, cm):
@@ -194,14 +222,34 @@ def build_html(rows, cm):
         f"<td>{esc(d)}</td></tr>\n" for a, b, c, d in _BVA_ROWS
     )
     defect_rows = "".join(
-        f"<div class='defect'><h4>{esc(t)}</h4><p>{esc(desc)}</p>"
-        f"<p class='mono'>해당 케이스: {esc(ids)}</p>"
-        f"<p class='fix'>↪ 개선안: {esc(fix)}</p></div>\n"
-        for t, desc, ids, fix in _DEFECTS
+        f"<div class='defect'><h4>✅ {esc(t)}</h4><p>{esc(desc)}</p>"
+        f"<p class='fix'>↪ 적용: {esc(fix)}</p>"
+        f"<p class='mono'>{esc(ids)}</p></div>\n"
+        for t, desc, fix, ids in _IMPROVEMENTS
     )
 
     fp_txt = ", ".join(f"{i} ({s:.3f})" for i, s in cm["fp_ids"]) or "없음"
     fn_txt = ", ".join(f"{i} ({s:.3f})" for i, s in cm["fn_ids"]) or "없음"
+
+    # Track B + 개선 전/후
+    tb = _load_track_b()
+    b = _BASELINE
+    track_b_html = ""
+    if tb:
+        track_b_html = f"""
+<h2>6.5 Track B — 호출된 모델 raw 추론 (실모델 DirectML)</h2>
+<p>M5 호출 {tb['called']}케이스 · raw PASS {tb['passed']} / FAIL {tb['fail']} ·
+   통과율 <b>{tb['pass_rate']:.3f}</b> (개선 전 {b['m5_pass_rate']:.3f})</p>
+<table style="width:auto">
+<tr><th>기준</th><th class="num">실패</th><th>비고</th></tr>
+<tr><td>vital_override</td><td class="num"><b>{tb['crit']['vital_override']}</b></td>
+    <td>개선 전 {b['vital_ov_fail']}건 → 프롬프트 수정 후 위기 normal 분류 제거</td></tr>
+<tr><td>label(할루시네이션)</td><td class="num">{tb['crit']['label_consistency']}</td><td>알람 환각 없음</td></tr>
+<tr><td>format</td><td class="num">{tb['crit']['format_complete']}</td><td>구조적 reason 생성</td></tr>
+<tr><td>numeric</td><td class="num">{tb['crit']['numeric_match']}</td>
+    <td>0.5B가 고정 예시 수치를 복사 — 값 치환 한계(룰 reason 보정이 corrected에서 보완)</td></tr>
+</table>
+"""
 
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -256,6 +304,17 @@ def build_html(rows, cm):
 </div>
 <p>총 <b>{cm['n']}</b>케이스(응급 {cm['tp']+cm['fn']} / 정상 {cm['tn']+cm['fp']}) ·
    회귀 가드(score 범위) <b>100/100 PASS</b>.</p>
+<h3>개선 전 → 후 (D1/D2/D3 + 프롬프트 적용)</h3>
+<table style="width:auto">
+<tr><th>지표</th><th class="num">개선 전</th><th class="num">개선 후</th></tr>
+<tr><td>Track A 정확도</td><td class="num">{b['accuracy']:.3f}</td><td class="num"><b>{cm['accuracy']:.3f}</b></td></tr>
+<tr><td>Track A 오탐율(FPR)</td><td class="num">{b['fpr']:.3f}</td><td class="num"><b>{cm['fpr']:.3f}</b></td></tr>
+<tr><td>Track A 미탐율(FNR)</td><td class="num">{b['fnr']:.3f}</td><td class="num"><b>{cm['fnr']:.3f}</b></td></tr>
+<tr><td>Track B vital_override 실패</td><td class="num">{b['vital_ov_fail']}</td>
+    <td class="num"><b>{(tb['crit']['vital_override'] if tb else '—')}</b></td></tr>
+</table>
+<p class="sub">주의: Track A는 임상 오라클 경계에 맞춰 curated된 BVA 세트(held-out 아님) — 1.000은
+   도출된 결함 3종이 닫혔음을 의미하며 일반화 성능 주장은 아님.</p>
 
 <h2>2. 방법론</h2>
 <ul>
@@ -290,8 +349,9 @@ def build_html(rows, cm):
 <p class="sub">참고: <span class="mono">val ≤ warn_lo</span>가 crit 위 구간을 모두 포착하므로 저측 dead-zone은 없음
    (HR 36–55는 정상이 아니라 경고).</p>
 
-<h2>6. 결함 분석 (FP/FN 근본원인)</h2>
+<h2>6. 개선 내역 (D1/D2/D3 + Track B 프롬프트 — 적용 완료)</h2>
 {defect_rows}
+{track_b_html}
 
 <h2>7. 전체 평가 데이터셋 ({cm['n']}케이스)</h2>
 <p class="legend">

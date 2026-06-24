@@ -226,7 +226,7 @@ class QwenLogic:
         return context
 
     def _build_analysis_prompt(self, expert_results, context_window=None, hourly_context=None):
-        """6개 few-shot 예시 + [현재] 상태로 구성된 단일 사용자 프롬프트를 반환."""
+        """few-shot 예시 + [현재] 상태로 구성된 단일 사용자 프롬프트를 반환."""
         fall = expert_results.get("fall", {})
         vital = expert_results.get("vital", {})
         env_sound = expert_results.get("env_sound", {})
@@ -283,6 +283,13 @@ class QwenLogic:
             '->{"risk_score":0.65,"risk_level":"warning","reason":"낙상위험+심박이상(hr=108)+호흡이상(rr=22)"}\n\n'
             "낙상:False(2%),심박:33,호흡:5,환경:silence,소견:심박이상(hr=33),호흡이상(rr=5)\n"
             '->{"risk_score":0.85,"risk_level":"critical","reason":"심박위기(hr=33)+호흡위기(rr=5)"}\n\n'
+            # 단독 vital 위기(고/저측) — 다른 신호 정상이어도 normal 금지
+            "낙상:False(0%),심박:130,호흡:16,환경:silence,소견:심박이상(hr=130)\n"
+            '->{"risk_score":0.7,"risk_level":"warning","reason":"심박위기(hr=130)"}\n\n'
+            "낙상:False(0%),심박:35,호흡:16,환경:silence,소견:심박이상(hr=35)\n"
+            '->{"risk_score":0.7,"risk_level":"warning","reason":"심박위기(hr=35)"}\n\n'
+            "낙상:False(0%),심박:72,호흡:4,환경:silence,소견:호흡이상(rr=4)\n"
+            '->{"risk_score":0.7,"risk_level":"warning","reason":"호흡위기(rr=4)"}\n\n'
             "낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상(hr=33),위험음(alarm)\n"
             '->{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기(hr=33)+알람"}\n\n'
             # keyword-only 응급: 환경:speech + 긴급키워드 → alarm 없어도 critical
@@ -501,7 +508,10 @@ class QwenLogic:
         try:
             system_content = (
                 "독거인 안전 모니터링 AI. JSON만 출력.\n"
-                '{"risk_score":float,"risk_level":"normal|warning|critical","reason":"str"}'
+                '{"risk_score":float,"risk_level":"normal|warning|critical","reason":"str"}\n'
+                "규칙: 심박(hr)이 40 이하 또는 130 이상, 호흡(rr)이 5 이하 또는 35 이상이면 "
+                "위기 상태다. 이때 risk_level은 절대 normal이 아니며 최소 warning, 단독이어도 critical일 수 있다. "
+                "reason에는 해당 수치를 반드시 적는다."
             )
 
             if hasattr(self.tokenizer, "apply_chat_template"):
@@ -724,12 +734,12 @@ class QwenLogic:
         if _env_l not in {"alarm", "impact"} and result.get("qwen_reason"):
             result["qwen_reason"] = re.sub(r"\+?알람", "", result["qwen_reason"]).strip("+").strip()
 
-        # vital 극한값(HR<=35 or >=130 / RR<=4 or >=35)일 때 Qwen "normal" 다운그레이드 방지
-        # emergency_score가 vital_bypass로 에스컬레이션한 케이스를 Qwen이 되돌리지 않도록 함
+        # vital 극한값(HR<=40 or >=130 / RR<=5 or >=35)일 때 Qwen "normal" 다운그레이드 방지
+        # emergency_score crit_lo(D1, 40/5)와 동일 경계. vital_bypass 에스컬레이션을 되돌리지 않도록 함
         _vital = (expert_results or {}).get("vital") or {}
         _hr = float(_vital.get("heart_rate", 0) or 0)
         _rr = float(_vital.get("breathing_rate", 0) or 0)
-        _vital_crisis = (0 < _hr <= 35) or _hr >= 130 or (0 < _rr <= 4) or _rr >= 35
+        _vital_crisis = (0 < _hr <= 40) or _hr >= 130 or (0 < _rr <= 5) or _rr >= 35
         if _vital_crisis:
             # ① risk_level 교정: normal → warning 에스컬레이션
             if result.get("risk_level") == "normal":
@@ -739,9 +749,9 @@ class QwenLogic:
 
             # ② reason 교정: vital 수치가 누락됐으면 항상 보정
             _vr_parts = []
-            if 0 < _hr <= 35 or _hr >= 130:
+            if 0 < _hr <= 40 or _hr >= 130:
                 _vr_parts.append(f"심박위기(hr={_hr:.0f})")
-            if 0 < _rr <= 4 or _rr >= 35:
+            if 0 < _rr <= 5 or _rr >= 35:
                 _vr_parts.append(f"호흡위기(rr={_rr:.0f})")
             _cur_reason = result.get("qwen_reason", "").strip()
             if _vr_parts:

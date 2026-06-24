@@ -8,10 +8,12 @@ SLM은 임계값(threshold) 초과 시에만 호출된다.
 import numpy as np
 
 # M2 생체신호 정상 범위
+# D1: crit_lo를 40/5로 상향 — HR=36·RR=5 같은 '직상' 심한 서맥/서호흡이
+#     경고(0.55)로만 처리돼 미탐되던 결함 해소 (crit→vital_bypass 에스컬레이션)
 _HR_WARN_LO, _HR_WARN_HI = 55.0, 100.0    # BPM
-_HR_CRIT_LO, _HR_CRIT_HI = 35.0, 130.0
+_HR_CRIT_LO, _HR_CRIT_HI = 40.0, 130.0
 _RR_WARN_LO, _RR_WARN_HI = 10.0, 22.0    # 분당 호흡수
-_RR_CRIT_LO, _RR_CRIT_HI =  4.0,  35.0
+_RR_CRIT_LO, _RR_CRIT_HI =  5.0,  35.0
 
 # M3 환경음 → 위험 가중치
 _SOUND_WEIGHTS = {
@@ -32,9 +34,18 @@ _DOMAIN_WEIGHTS = {"fall": 0.40, "vital": 0.30, "sound": 0.15, "speech": 0.15}
 
 # 복합 위험 보정 배율 (활성 도메인 수 기준)
 _COMPOSITE_BOOST = {2: 1.20, 3: 1.35, 4: 1.50}
+# D3: 부스트 발동에 최소 단일 도메인 피크 요구 — 전부 중등도(예: fall0.6+vital경고+impact)인데
+#     ×1.35로 과승급해 오탐(multi-12)되던 결함 해소
+_COMPOSITE_MIN_PEAK = 0.70
 
 # M2 생체신호 극한값 단일 에스컬레이션: vital_component==1.0이면 score 최솟값
 _VITAL_CRIT_BYPASS = 0.65
+
+# D2: 확정 낙상 + 경보/충격음 동시 → infer_confidence 감쇠와 무관하게 에스컬레이션
+#     (낙상센서·음향이 저신뢰로 깎여 보강된 복합응급이 0.6 직하로 미탐되던 결함 해소)
+_FALL_HAZARD_BYPASS = 0.65
+_FALL_CONFIRM_MIN = 0.80
+_HAZARD_SOUND_CONF_MIN = 0.80
 
 # M4 긴급 키워드 + M1 낙상 의심 동시 발생 시 score 보너스
 _KEYWORD_FALL_BONUS = 0.15
@@ -130,9 +141,11 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     score = sum(_DOMAIN_WEIGHTS[k] * breakdown[k] for k in _DOMAIN_WEIGHTS)
 
     # ── 복합 위험 보정: 활성 도메인 수에 비례한 차등 배율 ──────────────
+    # D3: 활성 도메인 ≥2 AND 최소 한 도메인이 피크(≥0.70)일 때만 발동 —
+    #     전부 중등도면 부스트하지 않아 과승급 오탐 방지
     _domain_scores = (breakdown["fall"], breakdown["vital"], breakdown["sound"], breakdown["speech"])
     _active = sum(1 for v in _domain_scores if v >= 0.5)
-    if _active >= 2:
+    if _active >= 2 and max(_domain_scores) >= _COMPOSITE_MIN_PEAK:
         score = min(1.0, score * _COMPOSITE_BOOST.get(_active, 1.50))
 
     # ── M4 긴급 키워드 + M1 낙상 의심 동시 발생 보너스 ─────────────────
@@ -146,5 +159,13 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     if _raw_vital_comp >= 1.0:
         score = max(score, _VITAL_CRIT_BYPASS)
         breakdown["vital_bypass"] = True
+
+    # ── D2: 확정 낙상 + 경보/충격음 동시 에스컬레이션 (raw 기반, conf 감쇠 무관) ──
+    _snd_conf_raw = float(sound_out.get("env_sound_confidence") or sound_out.get("confidence") or 0.0)
+    if (_fall_score_raw >= _FALL_CONFIRM_MIN
+            and label in ("alarm", "impact")
+            and _snd_conf_raw >= _HAZARD_SOUND_CONF_MIN):
+        score = max(score, _FALL_HAZARD_BYPASS)
+        breakdown["fall_hazard_bypass"] = True
 
     return float(np.clip(score, 0.0, 1.0)), breakdown
