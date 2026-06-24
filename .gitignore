@@ -11,3 +11,4 @@ eval/qwen_eval_dataset.json
 reports/
 *.json.bak
 .DS_Store
+.claude/
