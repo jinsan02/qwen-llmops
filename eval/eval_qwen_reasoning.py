@@ -483,6 +483,8 @@ def main():
     parser.add_argument("--model",  default=None, help="Qwen ONNX 모델 경로 (미입력 시 env SLM_MODEL 참조)")
     parser.add_argument("--mock",   action="store_true", help="모델 없이 score 검증만")
     parser.add_argument("--gpu",    action="store_true", help="GPU 추론(ORT_USE_GPU=1, DirectML→CUDA→CPU)")
+    parser.add_argument("--impl",   default="05b", choices=["05b", "15b"],
+                        help="추론 구현 선택: 05b=qwen_05b / 15b=qwen_15b (Qwen2.5-1.5B)")
     args = parser.parse_args()
 
     # GPU 설정: 모델 로드 전에 env 주입 (utils.get_ort_providers가 참조)
@@ -505,11 +507,15 @@ def main():
     # Qwen 모델 로드 (mock 아닐 때)
     qwen_logic = None
     if not args.mock:
-        model_path = args.model or os.getenv("SLM_MODEL", "volumes/models/qwen_05b")
+        _default_model = "volumes/models/qwen_15b" if args.impl == "15b" else "volumes/models/qwen_05b"
+        model_path = args.model or os.getenv("SLM_MODEL", _default_model)
         if os.path.exists(model_path):
-            from inference.qwen_05b import QwenLogic
+            if args.impl == "15b":
+                from inference.qwen_15b import QwenLogic
+            else:
+                from inference.qwen_05b import QwenLogic
             qwen_logic = QwenLogic(model_path)
-            print(f"[INFO] 모델 로드: {model_path}")
+            print(f"[INFO] 모델 로드: {model_path} (impl={args.impl})")
         else:
             print(f"[WARN] 모델 경로 없음({model_path}), mock 모드로 전환")
 
