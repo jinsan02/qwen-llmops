@@ -1,0 +1,106 @@
+{
+  "date": "20260624",
+  "n_warm": 3,
+  "results": [
+    {
+      "id": "normal-03",
+      "category": "normal",
+      "cold_ms": 223.62,
+      "warm_avg_ms": 2.43,
+      "warm_p50_ms": 2.44,
+      "warm_p95_ms": 2.46,
+      "warm_max_ms": 2.46,
+      "rss_mb": 54.9
+    },
+    {
+      "id": "fall-03",
+      "category": "fall_only",
+      "cold_ms": 2.41,
+      "warm_avg_ms": 2.47,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.51,
+      "warm_max_ms": 2.51,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "fall-06",
+      "category": "fall_only",
+      "cold_ms": 2.36,
+      "warm_avg_ms": 2.46,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.61,
+      "warm_max_ms": 2.61,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "vital-01",
+      "category": "vital_crisis",
+      "cold_ms": 2.35,
+      "warm_avg_ms": 2.47,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.5,
+      "warm_max_ms": 2.5,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "vital-06",
+      "category": "vital_crisis",
+      "cold_ms": 2.47,
+      "warm_avg_ms": 2.45,
+      "warm_p50_ms": 2.45,
+      "warm_p95_ms": 2.46,
+      "warm_max_ms": 2.46,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "multi-04",
+      "category": "multi_domain",
+      "cold_ms": 2.38,
+      "warm_avg_ms": 2.44,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.51,
+      "warm_max_ms": 2.51,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "multi-07",
+      "category": "multi_domain",
+      "cold_ms": 2.37,
+      "warm_avg_ms": 2.41,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.48,
+      "warm_max_ms": 2.48,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "no-signal-02",
+      "category": "no_signal",
+      "cold_ms": 2.41,
+      "warm_avg_ms": 2.45,
+      "warm_p50_ms": 2.47,
+      "warm_p95_ms": 2.5,
+      "warm_max_ms": 2.5,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "hg-03",
+      "category": "hallucination_guard",
+      "cold_ms": 2.2,
+      "warm_avg_ms": 2.43,
+      "warm_p50_ms": 2.43,
+      "warm_p95_ms": 2.57,
+      "warm_max_ms": 2.57,
+      "rss_mb": 55.0
+    },
+    {
+      "id": "hg-07",
+      "category": "hallucination_guard",
+      "cold_ms": 2.43,
+      "warm_avg_ms": 2.44,
+      "warm_p50_ms": 2.46,
+      "warm_p95_ms": 2.48,
+      "warm_max_ms": 2.48,
+      "rss_mb": 55.0
+    }
+  ]
+}
