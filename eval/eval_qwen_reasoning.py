@@ -98,6 +98,9 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
         "criteria": {},
         "pass": True,
         "failures": [],
+        # 정확도/오탐율 측정용: 독립 정답(ground_truth) vs 시스템 결정(m5_called)
+        "ground_truth": case.get("ground_truth_emergency"),
+        "predicted": m5_called_actual,
     }
 
     # ── 점수 범위 검증 ────────────────────────────────────────────────────
@@ -174,7 +177,62 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
 
 # ── 콘솔 리포트 ───────────────────────────────────────────────────────────
 
-_CATEGORIES = ["normal", "fall_only", "vital_crisis", "multi_domain", "no_signal", "hallucination_guard"]
+_CATEGORIES = ["normal", "fall_only", "vital_crisis", "multi_domain",
+               "no_signal", "hallucination_guard", "boundary_bva"]
+
+
+def _confusion(all_results: list[dict]) -> dict:
+    """ground_truth(실제 응급) vs predicted(시스템 m5 호출)로 혼동행렬·지표 계산."""
+    tp = fp = tn = fn = 0
+    skipped = 0
+    fp_ids, fn_ids = [], []
+    for r in all_results:
+        gt = r.get("ground_truth")
+        if gt is None:          # 라벨 없는 케이스는 정확도 산정에서 제외
+            skipped += 1
+            continue
+        pred = r.get("predicted", False)
+        if gt and pred:
+            tp += 1
+        elif gt and not pred:
+            fn += 1
+            fn_ids.append((r["id"], r["score"]))
+        elif (not gt) and pred:
+            fp += 1
+            fp_ids.append((r["id"], r["score"]))
+        else:
+            tn += 1
+    n = tp + fp + tn + fn
+    acc  = (tp + tn) / n if n else 0.0
+    fpr  = fp / (fp + tn) if (fp + tn) else 0.0     # 오탐율
+    fnr  = fn / (fn + tp) if (fn + tp) else 0.0     # 미탐율
+    prec = tp / (tp + fp) if (tp + fp) else 0.0
+    rec  = tp / (tp + fn) if (tp + fn) else 0.0
+    return {
+        "tp": tp, "fp": fp, "tn": tn, "fn": fn, "n": n, "skipped": skipped,
+        "accuracy": acc, "fpr": fpr, "fnr": fnr, "precision": prec, "recall": rec,
+        "fp_ids": fp_ids, "fn_ids": fn_ids,
+    }
+
+
+def _print_metrics(cm: dict) -> None:
+    print()
+    print("=" * 45)
+    print("  정확도 / 오탐율 / 미탐율 (화이트박스 평가)")
+    print("=" * 45)
+    print(f"  라벨 케이스 N={cm['n']}  (라벨없음 skip={cm['skipped']})")
+    print(f"  TP={cm['tp']}  FP={cm['fp']}  TN={cm['tn']}  FN={cm['fn']}")
+    print(f"  정확도(accuracy)   = {cm['accuracy']:.3f}")
+    print(f"  오탐율(FPR)        = {cm['fpr']:.3f}   FP/(FP+TN)")
+    print(f"  미탐율(FNR)        = {cm['fnr']:.3f}   FN/(FN+TP)")
+    print(f"  정밀도(precision)  = {cm['precision']:.3f}")
+    print(f"  재현율(recall)     = {cm['recall']:.3f}")
+    if cm["fp_ids"]:
+        print(f"  오탐(FP): " + ", ".join(f"{i}({s:.3f})" for i, s in cm["fp_ids"]))
+    if cm["fn_ids"]:
+        print(f"  미탐(FN): " + ", ".join(f"{i}({s:.3f})" for i, s in cm["fn_ids"]))
+    print()
+
 
 def _print_report(all_results: list[dict]) -> None:
     by_cat: dict[str, list] = {c: [] for c in _CATEGORIES}
@@ -210,7 +268,7 @@ def _print_report(all_results: list[dict]) -> None:
 
 # ── HTML 리포트 ───────────────────────────────────────────────────────────
 
-def _write_html(all_results: list[dict], report_dir: str) -> str:
+def _write_html(all_results: list[dict], report_dir: str, cm: dict = None) -> str:
     date_str = datetime.date.today().strftime("%Y%m%d")
     path = os.path.join(report_dir, f"qwen_eval_report_{date_str}.html")
 
@@ -233,10 +291,25 @@ def _write_html(all_results: list[dict], report_dir: str) -> str:
                 else:
                     criteria_cells += '<td style="color:red" title="{}">✗</td>'.format(c.get("msg", ""))
             reason_html = (r.get("qwen_reason") or "")[:100]
+            gt = r.get("ground_truth")
+            pred = r.get("predicted")
+            gt_cell = "—" if gt is None else ("응급" if gt else "정상")
+            # 오탐/미탐 강조
+            verdict = ""
+            if gt is not None:
+                if gt and not pred:
+                    verdict = '<td style="color:#c00;font-weight:bold">미탐 FN</td>'
+                elif (not gt) and pred:
+                    verdict = '<td style="color:#c60;font-weight:bold">오탐 FP</td>'
+                else:
+                    verdict = '<td style="color:#090">정답</td>'
+            else:
+                verdict = "<td>—</td>"
             rows_html += (
                 f"<tr>{status_cell}"
                 f"<td>{r['id']}</td><td>{r['category']}</td>"
                 f"<td>{r['score']:.4f}</td>"
+                f"<td>{gt_cell}</td>{verdict}"
                 f"{criteria_cells}"
                 f"<td>{reason_html}</td></tr>\n"
             )
@@ -244,6 +317,24 @@ def _write_html(all_results: list[dict], report_dir: str) -> str:
     total_pass = sum(1 for r in all_results if r["pass"])
     total      = len(all_results)
     summary    = f"{total_pass}/{total} PASS"
+
+    # 정확도/오탐율 패널
+    metrics_html = ""
+    if cm and cm.get("n"):
+        metrics_html = f"""
+<h3>정확도 / 오탐율 / 미탐율 (화이트박스 평가)</h3>
+<table style="width:auto">
+<tr><th>지표</th><th>값</th><th>정의</th></tr>
+<tr><td>정확도 (accuracy)</td><td><b>{cm['accuracy']:.3f}</b></td><td>(TP+TN)/N</td></tr>
+<tr><td>오탐율 (FPR)</td><td><b>{cm['fpr']:.3f}</b></td><td>FP/(FP+TN) — 정상을 응급으로 오판</td></tr>
+<tr><td>미탐율 (FNR)</td><td><b>{cm['fnr']:.3f}</b></td><td>FN/(FN+TP) — 응급을 놓침</td></tr>
+<tr><td>정밀도 (precision)</td><td>{cm['precision']:.3f}</td><td>TP/(TP+FP)</td></tr>
+<tr><td>재현율 (recall)</td><td>{cm['recall']:.3f}</td><td>TP/(TP+FN)</td></tr>
+</table>
+<p>혼동행렬: TP={cm['tp']} · FP={cm['fp']} · TN={cm['tn']} · FN={cm['fn']} · N={cm['n']} (라벨없음 skip={cm['skipped']})</p>
+<p><b>오탐(FP)</b>: {', '.join(f"{i}({s:.3f})" for i, s in cm['fp_ids']) or '없음'}</p>
+<p><b>미탐(FN)</b>: {', '.join(f"{i}({s:.3f})" for i, s in cm['fn_ids']) or '없음'}</p>
+"""
 
     html = f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -259,9 +350,12 @@ def _write_html(all_results: list[dict], report_dir: str) -> str:
 </head><body>
 <h2>Qwen Reasoning Eval — {date_str}</h2>
 <p><b>{summary}</b></p>
+{metrics_html}
+<h3>케이스별 상세</h3>
 <table>
 <tr>
   <th>결과</th><th>ID</th><th>카테고리</th><th>score</th>
+  <th>정답(GT)</th><th>판정</th>
   <th>numeric</th><th>label</th><th>vital_ov</th><th>format</th>
   <th>reason (앞100자)</th>
 </tr>
@@ -283,7 +377,13 @@ def main():
     parser.add_argument("--report", default="docs/")
     parser.add_argument("--model",  default=None, help="Qwen ONNX 모델 경로 (미입력 시 env SLM_MODEL 참조)")
     parser.add_argument("--mock",   action="store_true", help="모델 없이 score 검증만")
+    parser.add_argument("--gpu",    action="store_true", help="GPU 추론(ORT_USE_GPU=1, DirectML→CUDA→CPU)")
     args = parser.parse_args()
+
+    # GPU 설정: 모델 로드 전에 env 주입 (utils.get_ort_providers가 참조)
+    if args.gpu:
+        os.environ["ORT_USE_GPU"] = "1"
+        print("[INFO] GPU 추론 활성화 (ORT_USE_GPU=1): DirectML → CUDA → CPU fallback")
 
     # 골든셋 로드
     if not os.path.exists(args.golden):
@@ -314,8 +414,12 @@ def main():
     # 콘솔 출력
     _print_report(all_results)
 
+    # 정확도/오탐율/미탐율 (ground_truth 라벨 기반)
+    cm = _confusion(all_results)
+    _print_metrics(cm)
+
     # HTML 리포트 저장
-    html_path = _write_html(all_results, args.report)
+    html_path = _write_html(all_results, args.report, cm)
     print(f"[INFO] HTML 리포트: {html_path}")
 
     total_fail = sum(1 for r in all_results if not r["pass"])
