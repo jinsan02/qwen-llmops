@@ -8,6 +8,7 @@ services:
     networks:
       - qwen-network
 
+  # 기본(ONNX) M5 — onnxruntime, SLM_BACKEND=05b/15b
   ai-qwen:
     build:
       context: .
@@ -21,6 +22,33 @@ services:
       - REDIS_HOST=db
       - SLM_MIN_INTERVAL_MS=5000
       - ORT_USE_GPU=0
+      - SLM_BACKEND=${SLM_BACKEND:-05b}
+      - SLM_MODEL=${SLM_MODEL:-qwen_05b}
+    volumes:
+      - ./volumes/models:/app/models
+    command: ["python", "service/qwen_service.py"]
+    networks:
+      - qwen-network
+
+  # GGUF(llama.cpp) M5 — `docker compose --profile gguf up ai-qwen-gguf`
+  # 대전제 변경: Q4_K_M, RPi5 8GB에 최적 (메모리 ~1.3GB / 빠른 CPU 추론)
+  ai-qwen-gguf:
+    build:
+      context: .
+      target: gguf-runtime
+    container_name: qwen-ai-gguf
+    restart: always
+    profiles: ["gguf"]
+    depends_on:
+      - db
+    env_file: .env
+    environment:
+      - REDIS_HOST=db
+      - SLM_MIN_INTERVAL_MS=5000
+      - SLM_BACKEND=gguf
+      - SLM_MODEL=qwen_15b_gguf
+      - SLM_TOKENIZER=qwen_15b
+      - QWEN_GGUF_THREADS=4
     volumes:
       - ./volumes/models:/app/models
     command: ["python", "service/qwen_service.py"]

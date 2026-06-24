@@ -13,7 +13,15 @@ import time
 
 import redis as _redis
 
-from inference.qwen_05b import QwenLogic
+# 추론 백엔드 선택: SLM_BACKEND = 05b | 15b | gguf
+# (대전제 변경: gguf는 llama.cpp 백엔드. M5는 ai-qwen 컨테이너 격리라 M1~M4 ONNX 무관)
+_SLM_BACKEND = os.getenv("SLM_BACKEND", "05b").lower()
+if _SLM_BACKEND == "gguf":
+    from inference.qwen_gguf import QwenLogic
+elif _SLM_BACKEND == "15b":
+    from inference.qwen_15b import QwenLogic
+else:
+    from inference.qwen_05b import QwenLogic
 from inference.utils import (
     stream_id_ts_ms as _stream_id_ts_ms,
     json_loads as _json_loads,
@@ -28,6 +36,8 @@ SLM_MIN_INTERVAL_MS     = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 CONTEXT_WINDOW_MINUTES  = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MODEL_PATH = os.getenv("MODEL_PATH", "/app/models")
 SLM_MODEL  = os.getenv("SLM_MODEL",  "qwen_05b")
+# gguf 백엔드용 chat_template/tokenizer 폴더 (models/ 하위)
+SLM_TOKENIZER = os.getenv("SLM_TOKENIZER", "qwen_15b")
 
 LOGGER = logging.getLogger("qwen_llmops.qwen_svc")
 if not LOGGER.handlers:
@@ -103,7 +113,11 @@ def _write_emergency(r: _redis.Redis, snapshot: dict, fused: dict):
 
 def run():
     r = _connect_redis()
-    qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL))
+    if _SLM_BACKEND == "gguf":
+        qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL),
+                         tokenizer_dir=os.path.join(MODEL_PATH, SLM_TOKENIZER))
+    else:
+        qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL))
     qwen.redis_client = r
     _warmup_qwen(qwen)
 
