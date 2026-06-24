@@ -250,7 +250,10 @@ class QwenLogic:
             findings.append(f"호흡이상(rr={rr:.0f})")
         if env_label in {"impact", "alarm"}:
             findings.append(f"위험음({env_label})")
-        if transcript and any(kw in transcript for kw in ["살려", "도와", "응급", "위험", "119", "불", "화재"]):
+        _kw_list = list(speech_ko.get("keywords") or [])
+        _ALERT_KWS = frozenset(["살려", "도와", "응급", "위험", "119", "불", "화재"])
+        if (transcript and any(kw in transcript for kw in _ALERT_KWS)) or \
+                any(kw in _ALERT_KWS for kw in _kw_list):
             findings.append("긴급키워드")
 
         findings_str = ", ".join(findings) if findings else "정상"
@@ -271,18 +274,20 @@ class QwenLogic:
             "[예시]\n"
             "낙상:False(3%),심박:72,호흡:15,환경:silence,소견:정상\n"
             '->{"risk_score":0.1,"risk_level":"normal","reason":"정상"}\n\n'
-            # alarm 카운터: 알람음만 있고 낙상·활력징후 정상 → normal
             "낙상:False(5%),심박:72,호흡:15,환경:alarm,소견:위험음(alarm)\n"
             '->{"risk_score":0.2,"risk_level":"normal","reason":"알람음 있으나 낙상·활력징후 정상"}\n\n'
-            # fall_det 카운터: 낮은 신뢰도 낙상감지, 생체신호 정상 → normal
             "낙상:True(32%),심박:72,호흡:15,환경:silence,소견:낙상감지\n"
             '->{"risk_score":0.4,"risk_level":"normal","reason":"낙상감지 신뢰도낮음 활력징후정상"}\n\n'
-            "낙상:False(58%),심박:108,호흡:22,환경:noise,소견:낙상위험(58%),심박이상,호흡이상\n"
-            '->{"risk_score":0.65,"risk_level":"warning","reason":"낙상위험+심박+호흡 경계"}\n\n'
-            "낙상:False(2%),심박:33,호흡:5,환경:silence,소견:심박위기\n"
-            '->{"risk_score":0.85,"risk_level":"critical","reason":"심박위기"}\n\n'
-            "낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상,위험음(alarm)\n"
-            '->{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기+알람"}\n\n'
+            # RR 수치 포함 패턴 학습
+            "낙상:False(58%),심박:108,호흡:22,환경:noise,소견:낙상위험(58%),심박이상(hr=108),호흡이상(rr=22)\n"
+            '->{"risk_score":0.65,"risk_level":"warning","reason":"낙상위험+심박이상(hr=108)+호흡이상(rr=22)"}\n\n'
+            "낙상:False(2%),심박:33,호흡:5,환경:silence,소견:심박이상(hr=33),호흡이상(rr=5)\n"
+            '->{"risk_score":0.85,"risk_level":"critical","reason":"심박위기(hr=33)+호흡위기(rr=5)"}\n\n'
+            "낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상(hr=33),위험음(alarm)\n"
+            '->{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기(hr=33)+알람"}\n\n'
+            # keyword-only 응급: 환경:speech + 긴급키워드 → alarm 없어도 critical
+            "낙상:False(95%),심박:68,호흡:14,환경:speech,소견:낙상위험(95%),긴급키워드\n"
+            '->{"risk_score":0.9,"risk_level":"critical","reason":"낙상위험+긴급키워드"}\n\n'
             f"[현재] 낙상:{fall_detected}({fall_score:.0%}),심박:{hr:.0f},호흡:{rr:.0f},"
             f"환경:{env_label},소견:{findings_str}{ctx_note}\n"
             "->"
@@ -725,9 +730,28 @@ class QwenLogic:
         _hr = float(_vital.get("heart_rate", 0) or 0)
         _rr = float(_vital.get("breathing_rate", 0) or 0)
         _vital_crisis = (0 < _hr <= 35) or _hr >= 130 or (0 < _rr <= 4) or _rr >= 35
-        if _vital_crisis and result.get("risk_level") == "normal":
-            result["risk_level"] = "warning"
-            result["risk_score"] = max(result.get("risk_score", 0.0), 0.65)
-            result["vital_override"] = True
+        if _vital_crisis:
+            # ① risk_level 교정: normal → warning 에스컬레이션
+            if result.get("risk_level") == "normal":
+                result["risk_level"] = "warning"
+                result["risk_score"] = max(result.get("risk_score", 0.0), 0.65)
+                result["vital_override"] = True
+
+            # ② reason 교정: vital 수치가 누락됐으면 항상 보정
+            _vr_parts = []
+            if 0 < _hr <= 35 or _hr >= 130:
+                _vr_parts.append(f"심박위기(hr={_hr:.0f})")
+            if 0 < _rr <= 4 or _rr >= 35:
+                _vr_parts.append(f"호흡위기(rr={_rr:.0f})")
+            _cur_reason = result.get("qwen_reason", "").strip()
+            if _vr_parts:
+                # reason이 "정상"/빈값이면 교체, 수치가 없으면 append
+                if _cur_reason in ("정상", "", "normal"):
+                    result["qwen_reason"] = "+".join(_vr_parts)
+                    result["vital_override"] = True
+                elif not any(p.split("(")[1].rstrip(")") in _cur_reason
+                             for p in _vr_parts if "(" in p):
+                    result["qwen_reason"] = _cur_reason + "+" + "+".join(_vr_parts)
+                    result["vital_override"] = True
 
         return result

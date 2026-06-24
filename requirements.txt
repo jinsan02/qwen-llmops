@@ -1,4 +1,10 @@
+# ── ONNX Runtime EP 선택 (플랫폼별 하나만 설치) ──────────────────────────────
+# RPi5 / ARM64 CPU:        pip install onnxruntime>=1.20.1
+# Linux x86 CUDA:          pip install onnxruntime-gpu==1.18.0
+# Windows DX12 (no CUDA):  pip install onnxruntime-directml>=1.20.1
+# Docker ai-qwen 기본값:   Dockerfile에서 onnxruntime-gpu → onnxruntime 치환 (ARM64 빌드)
 onnxruntime-gpu==1.18.0
+# ─────────────────────────────────────────────────────────────────────────────
 transformers>=4.46.0,<4.48.0
 tokenizers>=0.20.0,<0.22.0
 numpy==1.26.4

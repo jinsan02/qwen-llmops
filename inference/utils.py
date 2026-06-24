@@ -8,10 +8,11 @@ import onnxruntime as ort
 
 
 def get_ort_providers():
-	# ORT_USE_GPU=1: CUDA EP 시도 → 드라이버 없으면 ORT가 CPU로 자동 fallback.
-	# RPi5(CUDA 없음)에서는 기본값 0 유지.
+	# ORT_USE_GPU=1: DML(Windows/DX12) → CUDA → CPU 순서로 시도.
+	# 사용 불가 EP는 ORT가 자동으로 건너뜀. RPi5(둘 다 없음)는 CPU fallback.
 	if os.getenv("ORT_USE_GPU", "0") == "1":
 		return [
+			"DmlExecutionProvider",
 			("CUDAExecutionProvider", {"do_copy_in_default_stream": True}),
 			"CPUExecutionProvider",
 		]

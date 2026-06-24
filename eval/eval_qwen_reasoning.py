@@ -13,6 +13,11 @@ import re
 import sys
 import datetime
 
+# Windows cp949 콘솔에서 한글/특수문자 출력 깨짐 방지
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from inference.emergency_score import compute_emergency_score
@@ -57,12 +62,22 @@ def _score_vital_override(reason: str, risk_level: str, exp: dict) -> tuple[bool
 
 
 def _score_format_complete(reason: str) -> tuple[bool, str]:
-    """문장이 최소 길이를 갖고 구두점으로 끝나는지 확인."""
-    if len(reason) < 8:
-        return False, f"reason 너무 짧음 (len={len(reason)})"
-    if not re.search(r"[.!?。]$", reason.strip()):
-        return False, f"문장 미완결 — 구두점으로 끝나지 않음: ...{reason[-10:]!r}"
-    return True, ""
+    """최소 길이 + 자연어 문장 또는 구조적 compact 포맷 여부 확인.
+
+    Qwen-0.5B는 '낙상위험+심박이상(hr=50)' 같은 compact tag 포맷을 출력한다.
+    이는 정보를 충분히 전달하는 유효한 포맷이므로 구두점 없어도 PASS.
+    단, '정상'(2자) 같이 의미 없는 단어 하나만 나오는 경우는 FAIL.
+    """
+    s = reason.strip()
+    if len(s) < 4:
+        return False, f"reason 너무 짧음 (len={len(s)}): {s!r}"
+    # 자연어 문장형: 구두점으로 끝남
+    if re.search(r"[.!?。]$", s):
+        return True, ""
+    # compact 구조형: 한글 2자 이상 + (수치 OR + 연결 OR 괄호 포함)
+    if re.search(r"[가-힣]{2,}", s) and re.search(r"\d|\+|\(", s):
+        return True, ""
+    return False, f"미완결/비구조적: {s!r}"
 
 
 # ── 케이스 평가 ───────────────────────────────────────────────────────────
