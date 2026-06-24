@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 *.pyd
 .env
+.env.example
+.env.sample
 *.onnx
 *.onnx.data
 volumes/models/
