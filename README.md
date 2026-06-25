@@ -237,4 +237,4 @@ docker compose logs -f ai
 
 ## 관련 레포
 
-- **[SafeWave-AI / rp5](https://github.com/jinsan02/rp5)** — Raspberry Pi 5 메인 시스템 (sensing, api, db 서비스 포함)
+- **[SafeWave-AI Ambient Monitoring](https://github.com/jinsan02/safewave-ai-ambient-monitoring.git)** — Raspberry Pi 5 메인 시스템 (sensing, api, db 서비스 포함)
