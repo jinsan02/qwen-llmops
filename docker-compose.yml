@@ -55,6 +55,30 @@ services:
     networks:
       - qwen-network
 
+  # M5 서빙 API (FastAPI) — `docker compose --profile api up api`
+  # POST /evaluate (M1~M4 → 응급지수 게이트 + M5) · GET /health · /metrics · /docs
+  api:
+    build:
+      context: .
+      target: gguf-runtime
+    container_name: qwen-api
+    restart: always
+    profiles: ["api"]
+    env_file: .env
+    environment:
+      - SLM_BACKEND=${SLM_BACKEND:-gguf}
+      - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf}
+      - SLM_TOKENIZER=qwen_15b
+      - MODEL_PATH=/app/models
+      - QWEN_GGUF_THREADS=4
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./volumes/models:/app/models
+    command: ["uvicorn", "service.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - qwen-network
+
 networks:
   qwen-network:
     driver: bridge
