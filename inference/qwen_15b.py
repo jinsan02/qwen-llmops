@@ -40,7 +40,8 @@ class QwenLogic:
         self.model_path = model_path
         self.session = None
         self.tokenizer = None
-        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "56"))
+        # 기본 64: 출력 토큰 분석 p99≈56(cap)에서 truncation 발생 → MAX=p99+여유=64 적용
+        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "64"))
         self.max_new_tokens = max(40, min(80, self.max_new_tokens))
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
         self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "1800"))
@@ -57,6 +58,8 @@ class QwenLogic:
         self.session_with_past = None
         self._is_merged_kv = False  # optimum 2.x single-file merged KV format
         self._stop_ids = None  # 멀티 eos 정지 토큰 집합 (lazy)
+        self._last_prompt_tokens = None  # 직전 추론 입력 토큰 수
+        self._last_output_tokens = None  # 직전 추론 출력 토큰 수
         self.feedback_topic_key = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 
         # 폴더인지 파일인지 확인
@@ -299,8 +302,9 @@ class QwenLogic:
          '{"risk_score":0.7,"risk_level":"warning","reason":"심박위기(hr=130)"}'),
         ("낙상:False(0%),심박:72,호흡:4,환경:silence,소견:호흡이상(rr=4)",
          '{"risk_score":0.7,"risk_level":"warning","reason":"호흡위기(rr=4)"}'),
-        ("낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상(hr=33),위험음(alarm)",
-         '{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기(hr=33)+호흡위기(rr=5)+알람"}'),
+        # [A/B 제거 후보] 4-domain critical (85토큰, 최대) — 제거해 토큰 절감 테스트 중
+        # ("낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상(hr=33),위험음(alarm)",
+        #  '{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기(hr=33)+호흡위기(rr=5)+알람"}'),
         ("낙상:False(95%),심박:68,호흡:14,환경:speech,소견:낙상위험(95%),긴급키워드",
          '{"risk_score":0.9,"risk_level":"critical","reason":"낙상위험+긴급키워드"}'),
     ]
@@ -578,6 +582,9 @@ class QwenLogic:
             else:
                 attention_mask = attention_mask.astype(np.int64)
 
+            # 입력 프롬프트 토큰 수 (강제 '{' 포함)
+            self._last_prompt_tokens = int(input_ids.shape[1])
+
             if self._is_merged_kv:
                 raw = self._generate_merged_kv(input_ids, attention_mask)
             elif self.session_with_past is not None:
@@ -586,7 +593,12 @@ class QwenLogic:
                 raw = self._generate_full_seq(input_ids, attention_mask)
 
             if not raw:
+                self._last_output_tokens = 0
                 return None
+            # 출력 토큰 수 (생성분 재토크나이즈 — 분포/상한 산정용)
+            self._last_output_tokens = len(
+                self.tokenizer(raw, add_special_tokens=False)["input_ids"]
+            )
             # 모델이 { 를 중복 생성했을 경우 정규화
             return "{" + raw.lstrip("{")
         except Exception as e:
@@ -752,6 +764,8 @@ class QwenLogic:
             "hourly_context": hourly_context,
             "qwen_infer_ms": round(float(qwen_infer_ms), 2) if qwen_infer_ms is not None else None,
             "slm_mode": "fallback" if used_fallback else "qwen",
+            "prompt_tokens": self._last_prompt_tokens,
+            "output_tokens": self._last_output_tokens,
         }
 
         if parsed_response is not None:

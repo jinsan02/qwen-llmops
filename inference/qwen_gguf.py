@@ -35,7 +35,8 @@ class QwenLogic(_QwenLogic15B):
         self.model_path = model_path
         self.session = None
         self.tokenizer = None
-        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "56"))
+        # 기본 64: 출력 토큰 분석 p99≈56(cap)에서 truncation 발생 → MAX=p99+여유=64 적용
+        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "64"))
         self.max_new_tokens = max(40, min(80, self.max_new_tokens))
         self.n_ctx = int(os.getenv("QWEN_GGUF_N_CTX", "2048"))
         self.n_threads = int(os.getenv("QWEN_GGUF_THREADS", "0")) or None  # 0 → llama 기본
@@ -49,6 +50,8 @@ class QwenLogic(_QwenLogic15B):
         self._hourly_cache_at_ms = 0
         self._hourly_cache_data = None
         self._stop_ids = None
+        self._last_prompt_tokens = None
+        self._last_output_tokens = None
         self.feedback_topic_key = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 
         # gguf 파일 해석
@@ -112,6 +115,9 @@ class QwenLogic(_QwenLogic15B):
                 stop=["<|im_end|>", "<|endoftext|>", "\n\n"],
                 echo=False,
             )
+            usage = out.get("usage") or {}
+            self._last_prompt_tokens = usage.get("prompt_tokens")
+            self._last_output_tokens = usage.get("completion_tokens")
             text = out["choices"][0]["text"]
             if not text:
                 return None

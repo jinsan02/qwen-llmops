@@ -11,6 +11,7 @@ qwen_golden_set.jsonl 생성기 (100케이스, 화이트박스 경계값 분석 
 """
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -188,6 +189,79 @@ NEW_CASES = [
 ]
 
 
+# ── 결측 노이즈: 비결정(non-decisive) 도메인 1개 제거 → 강건성 쌍 생성 ──────────
+def _decisive_domains(inp: dict) -> set:
+    """ground_truth()를 만든(=판정을 좌우한) 도메인 집합. 이건 제거하면 안 됨."""
+    fall = float(inp.get("fall", {}).get("fall_score", 0.0))
+    v = inp.get("vital", {})
+    hr = float(v.get("heart_rate", 0.0)); rr = float(v.get("breathing_rate", 0.0))
+    snd = inp.get("env_sound", {})
+    label = snd.get("env_sound_label") or snd.get("label") or "unknown"
+    sconf = float(snd.get("env_sound_confidence", 0.0))
+    kw = set(inp.get("speech_ko", {}).get("keywords") or [])
+    has_distress = bool(_DISTRESS & kw)
+    vital_warn = (hr > 0 and (40 < hr <= 55 or 100 <= hr < 130)) or \
+                 (rr > 0 and (5 < rr <= 10 or 22 <= rr < 34))
+    dec = set()
+    if hr > 0 and (hr <= 40 or hr >= 130):
+        dec.add("vital")
+    if rr > 0 and (rr <= 5 or rr >= 34):
+        dec.add("vital")
+    if has_distress and fall >= 0.5:
+        dec.update({"speech", "fall"})
+    if fall >= 0.9 and (vital_warn or label in ("alarm", "impact")):
+        dec.add("fall")
+        if label in ("alarm", "impact"):
+            dec.add("sound")
+        if vital_warn:
+            dec.add("vital")
+    if label == "alarm" and sconf >= 0.8 and fall >= 0.6:
+        dec.update({"sound", "fall"})
+    return dec
+
+
+def _present_domains(inp: dict) -> set:
+    pres = set()
+    if float(inp.get("fall", {}).get("fall_score", 0.0)) > 0:
+        pres.add("fall")
+    v = inp.get("vital", {})
+    if float(v.get("heart_rate", 0.0)) > 0 or float(v.get("breathing_rate", 0.0)) > 0:
+        pres.add("vital")
+    snd = inp.get("env_sound", {})
+    if (snd.get("env_sound_label") or "silence") != "silence" or float(snd.get("env_sound_confidence", 0.0)) > 0:
+        pres.add("sound")
+    sp = inp.get("speech_ko", {})
+    if (sp.get("keywords") or sp.get("speech_detected")):
+        pres.add("speech")
+    return pres
+
+
+_DOMAIN_KEY = {"fall": "fall", "vital": "vital", "sound": "env_sound", "speech": "speech_ko"}
+
+
+def perturb_missing(inp: dict):
+    """비결정 도메인 1개(센서)를 제거한 입력과 제거 도메인명을 반환.
+    제거 우선순위 speech→sound→vital→fall (안전 영향 낮은 순). 없으면 (사본, None).
+    비결정만 제거하므로 ground_truth는 보존된다(재계산해도 동일)."""
+    dec = _decisive_domains(inp)
+    pres = _present_domains(inp)
+    for dom in ("speech", "sound", "vital", "fall"):
+        if dom in pres and dom not in dec:
+            out = copy.deepcopy(inp)
+            out.pop(_DOMAIN_KEY[dom], None)
+            return out, dom
+    # 도메인 단위로 못 떨구면(주로 vital 단독 위기) vital 내 '비위기' 서브필드 제거
+    v = inp.get("vital", {})
+    hr = float(v.get("heart_rate", 0.0)); rr = float(v.get("breathing_rate", 0.0))
+    hr_crit = hr > 0 and (hr <= 40 or hr >= 130)
+    rr_crit = rr > 0 and (rr <= 5 or rr >= 34)
+    if hr_crit and rr > 0 and not rr_crit:   # HR 위기·RR 비위기 → RR 센서 누락
+        out = copy.deepcopy(inp); out["vital"].pop("breathing_rate", None); return out, "vital.rr"
+    if rr_crit and hr > 0 and not hr_crit:   # RR 위기·HR 비위기 → HR 센서 누락
+        out = copy.deepcopy(inp); out["vital"].pop("heart_rate", None); return out, "vital.hr"
+    return copy.deepcopy(inp), None  # 단일 신호뿐 → 제거 가능한 비결정 센서 없음(트리비얼 강건)
+
+
 def load_existing(path):
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -232,7 +306,30 @@ def main():
             "expected": exp,
         })
 
-    # 3) 혼동행렬 점검 (system 결정 = score>=0.6)
+    # 3) clean 태그 + 결측 노이즈 twin 생성 (100 → 200, clean↔noisy 쌍)
+    clean_rows = out_rows
+    for r in clean_rows:
+        r["pair_id"] = r["id"]
+        r["noisy"] = False
+    noisy_rows = []
+    drop_stat = {}
+    for r in clean_rows:
+        ninp, dropped = perturb_missing(r["input"])
+        nexp, _ = _build_expected(ninp)
+        nexp["note"] = f"[결측:{dropped or '없음'}] " + r["expected"].get("note", "")
+        noisy_rows.append({
+            "id": r["id"] + "-n",
+            "category": r["category"],
+            "ground_truth_emergency": ground_truth(ninp),  # 비결정 제거라 보존됨
+            "pair_id": r["id"],
+            "noisy": True,
+            "input": ninp,
+            "expected": nexp,
+        })
+        drop_stat[dropped or "없음"] = drop_stat.get(dropped or "없음", 0) + 1
+    out_rows = clean_rows + noisy_rows
+
+    # 4) 혼동행렬 점검 (system 결정 = score>=0.6)
     tp = fp = tn = fn = 0
     fp_ids, fn_ids = [], []
     for r in out_rows:
@@ -250,13 +347,25 @@ def main():
         else:
             tn += 1
 
+    # 5) Track A 강건성: 쌍별 pred(>=0.6) flip
+    by_id = {r["id"]: r for r in out_rows}
+    flips = []
+    for r in clean_rows:
+        cpred = compute_emergency_score(r["input"])[0] >= _M5_THRESHOLD
+        npred = compute_emergency_score(by_id[r["id"] + "-n"]["input"])[0] >= _M5_THRESHOLD
+        if cpred != npred:
+            flips.append(r["id"])
+
     total = len(out_rows)
     acc = (tp + tn) / total
     fpr = fp / (fp + tn) if (fp + tn) else 0.0
     fnr = fn / (fn + tp) if (fn + tp) else 0.0
-    print(f"총 {total}케이스  |  응급(gt=true)={tp+fn}  정상(gt=false)={tn+fp}")
+    print(f"총 {total}케이스 (clean {len(clean_rows)} + noisy {len(noisy_rows)})")
+    print(f"  응급(gt=true)={tp+fn}  정상(gt=false)={tn+fp}")
     print(f"TP={tp} FP={fp} TN={tn} FN={fn}")
     print(f"정확도={acc:.3f}  오탐율(FPR)={fpr:.3f}  미탐율(FNR)={fnr:.3f}")
+    print(f"결측 제거 도메인 분포: {drop_stat}")
+    print(f"Track A 쌍 flip(센서 누락에 판정 뒤집힘): {len(flips)}/{len(clean_rows)} {flips}")
     print(f"오탐(FP): {fp_ids}")
     print(f"미탐(FN): {fn_ids}")
 

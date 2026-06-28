@@ -130,6 +130,9 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
         # 정확도/오탐율 측정용: 독립 정답(ground_truth) vs 시스템 결정(m5_called)
         "ground_truth": case.get("ground_truth_emergency"),
         "predicted": m5_called_actual,
+        # 강건성(쌍) 측정용
+        "pair_id": case.get("pair_id"),
+        "noisy": case.get("noisy"),
     }
 
     # ── 점수 범위 검증 ────────────────────────────────────────────────────
@@ -181,6 +184,8 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
     results["vital_override_hit"] = bool(eval_result.get("vital_override"))
     results["qwen_infer_ms"]      = eval_result.get("qwen_infer_ms")
     results["slm_mode"]           = eval_result.get("slm_mode")
+    results["output_tokens"]      = eval_result.get("output_tokens")
+    results["prompt_tokens"]      = eval_result.get("prompt_tokens")
 
     # ── Track B 채점: 가드레일 보정 이전 raw 출력 기준 ──────────────────────
     # (corrected가 아니라 raw를 채점해야 프롬프트/chat_template 효과가 측정됨)
@@ -319,12 +324,55 @@ def _dump_raw_responses(all_results: list[dict], report_dir: str) -> str:
             "corrected_level": r.get("corrected_level", ""),
             "vital_override_hit": r.get("vital_override_hit", False),
             "qwen_infer_ms": r.get("qwen_infer_ms"),
+            "output_tokens": r.get("output_tokens"),
+            "prompt_tokens": r.get("prompt_tokens"),
+            "pair_id": r.get("pair_id"),
+            "noisy": r.get("noisy"),
             "m5_pass": r.get("m5_pass"),
             "m5_failures": r.get("m5_failures", []),
         })
     with open(path, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
     return path
+
+
+def _robustness(all_results: list[dict]) -> dict:
+    """clean↔noisy 쌍(pair_id) 매칭 → 센서 누락 시 판정 flip 측정."""
+    by_id = {r["id"]: r for r in all_results}
+    cleans = [r for r in all_results if r.get("noisy") is False and r.get("pair_id")]
+    pairs = 0
+    a_flip, b_flip = [], []
+    for c in cleans:
+        n = by_id.get(c["pair_id"] + "-n")
+        if not n:
+            continue
+        pairs += 1
+        # Track A: 시스템 호출 결정(score>=0.6)
+        if c.get("predicted") != n.get("predicted"):
+            a_flip.append(c["pair_id"])
+        # Track B: 모델 raw 등급(미호출은 'none')
+        cv = c.get("raw_risk_level") if c.get("m5_pass") is not None else "none"
+        nv = n.get("raw_risk_level") if n.get("m5_pass") is not None else "none"
+        if (c.get("m5_pass") is not None or n.get("m5_pass") is not None) and cv != nv:
+            b_flip.append(c["pair_id"])
+    if not pairs:
+        return None
+    return {"pairs": pairs, "a_flip": a_flip, "b_flip": b_flip}
+
+
+def _print_robustness(rb: dict) -> None:
+    if not rb:
+        return
+    print("=" * 45)
+    print("  강건성 — 센서 누락(clean↔noisy 쌍) flip")
+    print("=" * 45)
+    n = rb["pairs"]
+    print(f"  쌍 {n}개")
+    print(f"  Track A flip(호출결정): {len(rb['a_flip'])}/{n} "
+          f"(강건율 {1 - len(rb['a_flip'])/n:.3f})  {rb['a_flip']}")
+    print(f"  Track B flip(모델등급): {len(rb['b_flip'])}/{n} "
+          f"(강건율 {1 - len(rb['b_flip'])/n:.3f})  {rb['b_flip']}")
+    print()
 
 
 def _print_report(all_results: list[dict]) -> None:
@@ -538,6 +586,9 @@ def main():
     # Track A: 정확도/오탐율/미탐율 (ground_truth 라벨 기반)
     cm = _confusion(all_results)
     _print_metrics(cm)
+
+    # 강건성: clean↔noisy 쌍 flip
+    _print_robustness(_robustness(all_results))
 
     # Track B: 호출된 모델 raw 추론 평가 + raw 응답 덤프
     _print_m5_report(all_results)
