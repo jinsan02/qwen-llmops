@@ -28,11 +28,12 @@ _DOCS = os.path.join(_ROOT, "docs")
 _TOK_DIR = os.path.join(_ROOT, "volumes", "models", "qwen_15b")
 _M5 = 0.6
 
-# (라벨, 파일) — --tag로 선택. 기본 1000셋. int8b는 별도(--with-int8).
+# 표준 3-백엔드(2026-06-28~): base(fp32) / Q4_K_M(최경량) / Q5_K_M(경계 보완). --tag로 셋 선택.
 def _backends(tag):
     return [
-        ("1.5B fp32", f"qwen_responses_15b_{tag}.json"),
+        ("1.5B fp32 (base)", f"qwen_responses_15b_{tag}.json"),
         ("GGUF Q4_K_M", f"qwen_responses_gguf_{tag}.json"),
+        ("GGUF Q5_K_M", f"qwen_responses_gguf_q5_{tag}.json"),
     ]
 
 
