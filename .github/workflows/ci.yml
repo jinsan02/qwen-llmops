@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps (mock 게이트는 numpy만 필요 — 모델/ORT 불필요)
+        run: pip install "numpy==1.26.4"
+
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            inference/emergency_score.py inference/qwen_15b.py inference/qwen_gguf.py \
+            eval/eval_qwen_reasoning.py service/api.py \
+            scripts/gen_golden_set.py scripts/gen_golden_set_v2.py scripts/analyze_backends.py
+
+      - name: 경계값 테스트 (emergency_score 53케이스)
+        run: python tests/test_emergency_score.py
+
+      - name: Eval 게이트 — Track A 회귀 (mock, 모델 불필요)
+        # 골든셋 score 윈도우/ m5_called 회귀 시 exit 1 → CI 실패
+        run: python eval/eval_qwen_reasoning.py --mock --golden data/qwen_golden_set.jsonl --report docs/
