@@ -8,6 +8,7 @@
 실행: python scripts/analyze_backends.py
 """
 
+import argparse
 import datetime
 import html
 import json
@@ -27,12 +28,12 @@ _DOCS = os.path.join(_ROOT, "docs")
 _TOK_DIR = os.path.join(_ROOT, "volumes", "models", "qwen_15b")
 _M5 = 0.6
 
-# (라벨, 파일) — 있는 것만 사용
-_BACKENDS = [
-    ("1.5B fp32", "qwen_responses_15b_4shot.json"),
-    ("GGUF Q4_K_M", "qwen_responses_gguf_4shot.json"),
-    ("INT8 block-wise", "qwen_responses_int8b.json"),
-]
+# (라벨, 파일) — --tag로 선택. 기본 1000셋. int8b는 별도(--with-int8).
+def _backends(tag):
+    return [
+        ("1.5B fp32", f"qwen_responses_15b_{tag}.json"),
+        ("GGUF Q4_K_M", f"qwen_responses_gguf_{tag}.json"),
+    ]
 
 
 def _load_json(fn):
@@ -165,9 +166,12 @@ def prompt_breakdown():
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tag", default="1000", help="dump 태그 (reports/qwen_responses_{15b,gguf}_{tag}.json)")
+    args = ap.parse_args()
     golden = _load_golden()
     dumps = {}
-    for lbl, fn in _BACKENDS:
+    for lbl, fn in _backends(args.tag):
         d = _load_json(fn)
         if d:
             dumps[lbl] = d
@@ -269,10 +273,10 @@ def _write_html(golden, dumps, a_n, a_flip, b_rob, common, agree_rate, disagree,
 관측 최소 {reco['out_min']} → <b>MIN {reco['min_reco']}</b>. 현재 clamp 40~80/def56 → def {reco['max_reco']} 안팎으로 축소 여지.</div>"""
 
     return _emit(date_str, rob_rows, tok_rows, dis_rows, len(common), agree_rate, pb_block, reco_block,
-                 list(dumps.keys()))
+                 list(dumps.keys()), len(golden))
 
 
-def _emit(date_str, rob_rows, tok_rows, dis_rows, n_common, agree_rate, pb_block, reco_block, backends):
+def _emit(date_str, rob_rows, tok_rows, dis_rows, n_common, agree_rate, pb_block, reco_block, backends, n_cases):
     os.makedirs(_DOCS, exist_ok=True)
     path = os.path.join(_DOCS, "safewave_m5_robustness_token.html")
     htmldoc = f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -307,7 +311,7 @@ def _emit(date_str, rob_rows, tok_rows, dis_rows, n_common, agree_rate, pb_block
 <div class="header"><div class="container">
  <div class="badge">M5 Robustness & Token Analysis</div>
  <h1>SafeWave-AI — M5 강건성·토큰 분석</h1>
- <p class="sub">골든셋 200(clean↔noisy 100쌍) · 백엔드: {esc_join(backends)} · {date_str}</p>
+ <p class="sub">골든셋 {n_cases}(clean↔noisy {n_cases//2}쌍, 노인 실측분포+모순신호) · 백엔드: {esc_join(backends)} · {date_str}</p>
 </div></div>
 <div class="container">
 
