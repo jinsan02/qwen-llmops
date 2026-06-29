@@ -284,16 +284,62 @@ class QwenLogic:
                 f"환경:{env_label},소견:{findings_str}{ctx_note}")
         return line
 
+    # 시계열 정상 범위(소견·게이트와 정합: HR 55~100, RR 10~22)
+    _TS_HR_LO, _TS_HR_HI = 55.0, 100.0
+    _TS_RR_LO, _TS_RR_HI = 10.0, 22.0
+
+    def _series_prompt(self, time_series, k=4):
+        """≤60행 시계열 → 압축요약 한 줄(추세 시작→최근 + 경고누적, ~30토큰).
+        추세의 '시작→최근'이 최근값을 담으므로 분당 raw행은 생략 — 모델이 raw행을
+        reason에 복사(echo)해 JSON이 잘리던 문제·토큰 낭비 방지.
+        신호가 없으면(경고0 & 추세 안정) 빈 문자열 — 정상·안정 시계열은 미노출."""
+        if not time_series or len(time_series) < 3:
+            return ""
+        rows = list(time_series)
+        hrs = [float(r.get("hr", 0) or 0) for r in rows if float(r.get("hr", 0) or 0) > 0]
+        rrs = [float(r.get("rr", 0) or 0) for r in rows if float(r.get("rr", 0) or 0) > 0]
+
+        def _trend(vals):
+            if len(vals) < 3:
+                return None
+            q = max(1, len(vals) // 4)
+            s0 = sum(vals[:q]) / q
+            s1 = sum(vals[-q:]) / q
+            d = s1 - s0
+            arrow = "상승" if d > 2 else "하강" if d < -2 else "안정"
+            return s0, s1, sum(vals) / len(vals), arrow
+
+        ht = _trend(hrs)
+        rt = _trend(rrs)
+        warn = sum(1 for r in rows
+                   if (float(r.get("hr", 0) or 0) > 0 and not (self._TS_HR_LO < float(r["hr"]) < self._TS_HR_HI))
+                   or (float(r.get("rr", 0) or 0) > 0 and not (self._TS_RR_LO < float(r["rr"]) < self._TS_RR_HI)))
+
+        # 신호 없음(경고0 & HR/RR 추세 모두 안정) → 시계열 라인 생략
+        hr_moving = ht and ht[3] != "안정"
+        rr_moving = rt and rt[3] != "안정"
+        if warn == 0 and not hr_moving and not rr_moving:
+            return ""
+
+        parts = []
+        if ht:
+            parts.append(f"HR {ht[0]:.0f}→{ht[1]:.0f}({ht[3]},μ{ht[2]:.0f})")
+        if rt:
+            parts.append(f"RR {rt[0]:.0f}→{rt[1]:.0f}({rt[3]})")
+        parts.append(f"경고{warn}/{len(rows)}분")
+        return f"[1h추세] {' '.join(parts)}"
+
     # instruct 모델용 multi-turn few-shot (각 예시를 user/assistant 턴으로)
+    # C(최적화): 규칙 슬림 — HR/RR 위기 한 줄 병합, 군더더기 제거(토큰 절감, Track B 무손실 검증).
     _SYSTEM = (
-        "너는 독거노인 안전 모니터링 AI다. 주어진 센서 상태 한 줄을 보고 위험도를 평가해 "
-        "JSON 한 줄만 출력한다. 예시를 반복하지 말고 입력값으로 새로 판단한다.\n"
+        "너는 독거노인 안전 모니터링 AI다. 센서 상태를 보고 위험도를 평가해 JSON 한 줄만 출력한다. "
+        "예시를 반복하지 말고 입력으로 새로 판단한다.\n"
         "규칙:\n"
-        "- 심박 ≤40 또는 ≥130 → 심박위기: risk_level은 warning 이상, reason에 hr 수치 명시\n"
-        "- 호흡 ≤5 또는 ≥35 → 호흡위기: risk_level은 warning 이상, reason에 rr 수치 명시\n"
-        "- 낙상감지 또는 긴급키워드(살려/도와/119 등) → warning 이상\n"
-        "- 위 위기가 없고 활력징후 정상이면 → normal\n"
-        '형식: {"risk_score":0~1,"risk_level":"normal|warning|critical","reason":"한국어 근거"}'
+        "- 심박 ≤40/≥130 또는 호흡 ≤5/≥35 → 위기: warning 이상, reason에 수치 명시\n"
+        "- 낙상감지 또는 긴급키워드(살려/도와/119) → warning 이상\n"
+        "- [1h추세] 지속 경고 누적·악화 추세 → 한 단계 상향\n"
+        "- 위기 없고 활력징후 정상 → normal\n"
+        '형식: {"risk_score":0~1,"risk_level":"normal|warning|critical","reason":"근거"}'
     )
     _SHOTS = [
         ("낙상:False(3%),심박:72,호흡:15,환경:silence,소견:정상",
@@ -307,11 +353,23 @@ class QwenLogic:
         #  '{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기(hr=33)+호흡위기(rr=5)+알람"}'),
         ("낙상:False(95%),심박:68,호흡:14,환경:speech,소견:낙상위험(95%),긴급키워드",
          '{"risk_score":0.9,"risk_level":"critical","reason":"낙상위험+긴급키워드"}'),
+        # 시계열 예시(악화 추세): [1h추세] 줄을 복사하지 말고 간결한 근거+추세 태그로 요약
+        ("낙상:False(0%),심박:108,호흡:16,환경:silence,소견:심박이상(hr=108)\n"
+         "[1h추세] HR 75→106(상승,μ90) 경고12/30분",
+         '{"risk_score":0.8,"risk_level":"warning","reason":"심박이상(hr=108)+악화추세"}'),
+        # 시계열 예시(지속 경고): 추세는 안정이어도 경고가 오래 누적되면 warning
+        ("낙상:False(0%),심박:66,호흡:10,환경:silence,소견:정상\n"
+         "[1h추세] HR 66→66(안정,μ66) RR 10→10(안정) 경고33/40분",
+         '{"risk_score":0.7,"risk_level":"warning","reason":"지속경고 누적(rr=10,40분)"}'),
     ]
 
-    def _build_messages(self, expert_results, context_window=None, hourly_context=None):
-        """system + few-shot(user/assistant 턴) + 현재 상태(user)로 messages 구성."""
+    def _build_messages(self, expert_results, context_window=None, hourly_context=None, time_series=None):
+        """system + few-shot(user/assistant 턴) + 현재 상태(+시계열)(user)로 messages 구성."""
         cur = self._state_line(expert_results, context_window, hourly_context)
+        if time_series:
+            series_line = self._series_prompt(time_series)
+            if series_line:
+                cur = cur + "\n" + series_line
         messages = [{"role": "system", "content": self._SYSTEM}]
         for u, a in self._SHOTS:
             messages.append({"role": "user", "content": u})
@@ -696,13 +754,14 @@ class QwenLogic:
         adjusted = float(np.clip(risk_score + delta, 0.0, 1.0))
         return adjusted
 
-    def evaluate(self, expert_results, context_window=None):
+    def evaluate(self, expert_results, context_window=None, time_series=None):
         """
         최종 위험도 평가
 
         Args:
             expert_results: M1-M4 전문가 모델의 결과
             context_window: 시간 시리즈 맥락 (최근 경고/긴급 카운트 등)
+            time_series: 분당 vital 시계열(≤60행) — 주어지면 프롬프트에 압축 반영(Redis 스캔 대체)
 
         Returns:
             {
@@ -722,7 +781,7 @@ class QwenLogic:
         parsed_response = None
         used_fallback = False
         if self.session and self.tokenizer:
-            messages = self._build_messages(expert_results, context_window, hourly_context)
+            messages = self._build_messages(expert_results, context_window, hourly_context, time_series)
             qwen_started = time.perf_counter()
             qwen_response = self._evaluate_with_qwen(messages)
             qwen_infer_ms = (time.perf_counter() - qwen_started) * 1000.0

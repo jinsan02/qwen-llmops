@@ -37,6 +37,8 @@ _COMPOSITE_BOOST = {2: 1.20, 3: 1.35, 4: 1.50}
 # D3: 부스트 발동에 최소 단일 도메인 피크 요구 — 전부 중등도(예: fall0.6+vital경고+impact)인데
 #     ×1.35로 과승급해 오탐(multi-12)되던 결함 해소
 _COMPOSITE_MIN_PEAK = 0.70
+# B(개선): 2도메인 부스트는 더 강한 피크(near-확정) 요구 — 중등도 2신호 과승급 차단
+_COMPOSITE_MIN_PEAK_2DOM = 0.90
 
 # M2 생체신호 극한값 단일 에스컬레이션: vital_component==1.0이면 score 최솟값
 _VITAL_CRIT_BYPASS = 0.65
@@ -50,6 +52,67 @@ _HAZARD_SOUND_CONF_MIN = 0.80
 # M4 긴급 키워드 + M1 낙상 의심 동시 발생 시 score 보너스
 _KEYWORD_FALL_BONUS = 0.15
 _KEYWORD_FALL_SCORE_MIN = 0.25
+
+# ── 시계열(1h, ≤60행) 에스컬레이션 ──────────────────────────────────────────
+# 단발 스냅샷이 놓치는 '지속 경고 누적·점진 악화' 궤적을 M5 임계(0.6)로 올린다.
+# time_series=None이면 전혀 관여하지 않음(스냅샷 전용 — 하위호환).
+_TS_MIN_ROWS = 10                # 이보다 짧으면 시계열 신호 무시(sparse → 스냅샷 govern)
+_TS_RECENT_WINDOW = 20           # 최근 N분 윈도우
+_TS_SUSTAINED_RATIO = 0.60       # 최근 윈도우 warn-or-worse 비율 임계 → 지속 경고
+_TS_HR_RISE = 30.0               # HR 상승 추세(빈맥 악화) 임계
+_TS_HR_END_HI = 100.0
+_TS_HR_FALL = 25.0               # HR 하강 추세(서맥 악화) 임계
+_TS_HR_END_LO = 58.0
+_TS_RR_RISE = 10.0               # RR 상승 추세(빈호흡 악화) 임계
+_TS_RR_END_HI = 22.0
+_TS_FLOOR = 0.60                 # 에스컬레이션 시 score 최솟값(M5 호출)
+
+
+def _ts_warn_or_worse(hr: float, rr: float) -> bool:
+    """단일 행이 정상 범위를 벗어났는가(warn 이상)."""
+    return (hr > 0 and (hr <= _HR_WARN_LO or hr >= _HR_WARN_HI)) or \
+           (rr > 0 and (rr <= _RR_WARN_LO or rr >= _RR_WARN_HI))
+
+
+def _ts_quartile_means(vals: list) -> tuple:
+    """시작 1/4 평균, 최근 1/4 평균 (추세 방향 산정)."""
+    if len(vals) < 4:
+        m = sum(vals) / len(vals) if vals else 0.0
+        return m, m
+    q = max(1, len(vals) // 4)
+    return sum(vals[:q]) / q, sum(vals[-q:]) / q
+
+
+def _temporal_escalation(time_series) -> tuple:
+    """시계열에서 지속 경고/점진 악화를 감지해 (floor, tags)를 반환.
+    time_series: [{m, hr, rr, ...}, ...] (m 오름차순, 마지막이 현재). 신호 없으면 (0.0, [])."""
+    if not time_series or len(time_series) < _TS_MIN_ROWS:
+        return 0.0, []
+    rows = list(time_series)
+    hrs = [float(r.get("hr", 0) or 0) for r in rows]
+    rrs = [float(r.get("rr", 0) or 0) for r in rows]
+
+    recent = rows[-_TS_RECENT_WINDOW:]
+    sustained = sum(1 for r in recent
+                    if _ts_warn_or_worse(float(r.get("hr", 0) or 0), float(r.get("rr", 0) or 0)))
+    sustained_ratio = sustained / len(recent)
+
+    hr_start, hr_end = _ts_quartile_means([h for h in hrs if h > 0] or [0.0])
+    rr_start, rr_end = _ts_quartile_means([r for r in rrs if r > 0] or [0.0])
+    hr_trend = hr_end - hr_start
+    rr_trend = rr_end - rr_start
+
+    tags = []
+    if sustained_ratio >= _TS_SUSTAINED_RATIO:
+        tags.append("sustained_warn")
+    if hr_trend >= _TS_HR_RISE and hr_end >= _TS_HR_END_HI:
+        tags.append("hr_rising")
+    if hr_trend <= -_TS_HR_FALL and 0 < hr_end <= _TS_HR_END_LO:
+        tags.append("hr_falling")
+    if rr_trend >= _TS_RR_RISE and rr_end >= _TS_RR_END_HI:
+        tags.append("rr_rising")
+
+    return (_TS_FLOOR, tags) if tags else (0.0, [])
 
 
 def _conf_weight(confidence: float) -> float:
@@ -68,9 +131,13 @@ def _vital_component(val: float, crit_lo: float, warn_lo: float, warn_hi: float,
     return 0.0
 
 
-def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
+def compute_emergency_score(expert_results: dict, time_series=None) -> tuple[float, dict]:
     """
     M1-M4 출력에서 응급지수(0.0-1.0)를 계산한다.
+
+    time_series(선택): [{m, hr, rr, ...}, ...] 1h(≤60행) 시계열. 주어지면 스냅샷 점수에
+      지속 경고·점진 악화 에스컬레이션을 적용(M5 임계 0.6으로 floor). None이면 스냅샷 전용
+      (기존과 100% 동일 — 하위호환).
 
     도메인 가중치: fall 40% + vital 30% + sound 15% + speech 15%
     복합 위험 보정(활성 도메인 수 비례):
@@ -141,11 +208,13 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     score = sum(_DOMAIN_WEIGHTS[k] * breakdown[k] for k in _DOMAIN_WEIGHTS)
 
     # ── 복합 위험 보정: 활성 도메인 수에 비례한 차등 배율 ──────────────
-    # D3: 활성 도메인 ≥2 AND 최소 한 도메인이 피크(≥0.70)일 때만 발동 —
-    #     전부 중등도면 부스트하지 않아 과승급 오탐 방지
+    # D3: 활성 도메인 ≥2 AND 최소 한 도메인이 피크일 때만 발동.
+    # B(개선): 2도메인 부스트는 near-확정 피크(≥0.90)를 요구 — 중등도 2신호(예: fall0.89+서맥)
+    #     가 ×1.20으로 0.6을 넘는 과승급 오탐 방지. 3+ 도메인은 0.70 유지(다신호 복합응급).
     _domain_scores = (breakdown["fall"], breakdown["vital"], breakdown["sound"], breakdown["speech"])
     _active = sum(1 for v in _domain_scores if v >= 0.5)
-    if _active >= 2 and max(_domain_scores) >= _COMPOSITE_MIN_PEAK:
+    _min_peak = _COMPOSITE_MIN_PEAK_2DOM if _active == 2 else _COMPOSITE_MIN_PEAK
+    if _active >= 2 and max(_domain_scores) >= _min_peak:
         score = min(1.0, score * _COMPOSITE_BOOST.get(_active, 1.50))
 
     # ── M4 긴급 키워드 + M1 낙상 의심 동시 발생 보너스 ─────────────────
@@ -167,5 +236,12 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
             and _snd_conf_raw >= _HAZARD_SOUND_CONF_MIN):
         score = max(score, _FALL_HAZARD_BYPASS)
         breakdown["fall_hazard_bypass"] = True
+
+    # ── 시계열 에스컬레이션: 지속 경고/점진 악화 궤적 → M5 임계로 floor ──────────
+    if time_series:
+        ts_floor, ts_tags = _temporal_escalation(time_series)
+        if ts_floor > 0.0 and score < ts_floor:
+            score = ts_floor
+            breakdown["temporal_escalation"] = ts_tags
 
     return float(np.clip(score, 0.0, 1.0)), breakdown

@@ -274,6 +274,55 @@ s, bd = compute_emergency_score(_mk(fall=0.6, hr=50, label="alarm", conf=1.0))
 check("D3 피크≥0.70(alarm) 포함 → composite 부스트 발동 score≥0.6", s, bd, score_lo=0.60, score_hi=1.0)
 
 
+# ── 시계열 에스컬레이션 (하위호환 + 지속/악화/회복) ─────────────────────────
+print("[11] 시계열 에스컬레이션")
+
+
+def _ts(hrs, rrs=None):
+    rrs = rrs or [16] * len(hrs)
+    n = len(hrs)
+    return [{"m": i - n + 1, "hr": hrs[i], "rr": rrs[i]} for i in range(n)]
+
+
+# 하위호환: time_series None/[] → 스냅샷 전용과 100% 동일
+base_s, _ = compute_emergency_score(_mk(hr=110))
+s_none, _ = compute_emergency_score(_mk(hr=110), time_series=None)
+s_empty, _ = compute_emergency_score(_mk(hr=110), time_series=[])
+if base_s == s_none == s_empty:
+    PASS += 1
+    VERBOSE and print(f"  PASS  하위호환 None/[] 동일 (score={base_s:.4f})")
+else:
+    FAIL += 1
+    print(f"  FAIL  하위호환 깨짐: base={base_s} none={s_none} empty={s_empty}")
+
+# 지속 경고: HR=110(warn) 20분 지속 → sustained → floor 0.6
+s, bd = compute_emergency_score(_mk(hr=110), time_series=_ts([110] * 20))
+check("지속 경고(HR=110×20) → 시계열 에스컬레이션 floor 0.6", s, bd, score_lo=0.60, score_hi=0.66)
+if bd.get("temporal_escalation"):
+    PASS += 1
+    VERBOSE and print(f"  PASS  temporal_escalation 플래그 set: {bd['temporal_escalation']}")
+else:
+    FAIL += 1
+    print("  FAIL  temporal_escalation 플래그 미set")
+
+# 시계열 없으면 동일 스냅샷은 경고(0.165)에 머묾 (에스컬레이션 아님)
+s, bd = compute_emergency_score(_mk(hr=110))
+check("시계열無 HR=110 → 경고 유지 score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
+
+# 점진 악화: HR 70→108 단조 상승 30분 → hr_rising → floor 0.6
+s, bd = compute_emergency_score(_mk(hr=108),
+                                time_series=_ts([int(70 + (108 - 70) * i / 29) for i in range(30)]))
+check("점진 악화(HR 70→108) → 시계열 에스컬레이션 floor 0.6", s, bd, score_lo=0.60, score_hi=0.66)
+
+# 회복: 정상 스냅샷(HR=72) + 초기 급변 후 20분 정상 지속 → 에스컬레이션 안 함
+s, bd = compute_emergency_score(_mk(hr=72), time_series=_ts([125] * 5 + [72] * 20))
+check("회복(125×5→72×20, 스냅샷 정상) → 에스컬레이션 없음 score~0", s, bd, score_lo=0.0, score_hi=0.10)
+
+# sparse: HR=110이지만 시계열 6행(<10) → 무시, 스냅샷 경고에 머묾
+s, bd = compute_emergency_score(_mk(hr=110), time_series=_ts([110] * 6))
+check("sparse(6행<10) → 시계열 무시, score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
+
+
 # ── 결과 ────────────────────────────────────────────────────────────────────
 print()
 total = PASS + FAIL

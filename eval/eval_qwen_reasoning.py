@@ -113,8 +113,9 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
     inp  = case["input"]
     exp  = case["expected"]
     cid  = case["id"]
+    ts   = case.get("time_series")   # 시계열(≤60행) — 있으면 Track A 게이트에 반영
 
-    score, breakdown = compute_emergency_score(inp)
+    score, breakdown = compute_emergency_score(inp, time_series=ts)
     m5_called_actual = score >= _M5_THRESHOLD
 
     results = {
@@ -166,7 +167,7 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
 
     # ── M5 추론 실행 ─────────────────────────────────────────────────────
     try:
-        eval_result = qwen_logic.evaluate(inp)
+        eval_result = qwen_logic.evaluate(inp, time_series=ts)
     except Exception as exc:
         results["m5_pass"] = False
         results["m5_failures"].append(f"QwenLogic.evaluate 오류: {exc}")

@@ -23,7 +23,8 @@ jobs:
           python -m py_compile \
             inference/emergency_score.py inference/qwen_15b.py inference/qwen_gguf.py \
             eval/eval_qwen_reasoning.py service/api.py \
-            scripts/gen_golden_set.py scripts/gen_golden_set_v2.py scripts/analyze_backends.py
+            scripts/gen_golden_set.py scripts/gen_golden_set_v2.py scripts/gen_golden_set_v3.py \
+            scripts/analyze_backends.py scripts/check_drift.py
 
       - name: 경계값 테스트 (emergency_score 53케이스)
         run: python tests/test_emergency_score.py

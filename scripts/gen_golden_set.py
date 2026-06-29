@@ -42,7 +42,7 @@ def ground_truth(inp: dict) -> bool:
     # 1) 명백한 생체신호 위기: 심한 서맥/빈맥/무호흡/과호흡
     if hr > 0 and (hr <= 40 or hr >= 130):
         return True
-    if rr > 0 and (rr <= 5 or rr >= 34):
+    if rr > 0 and (rr <= 5 or rr >= 35):   # 게이트 crit_hi(35)와 정렬 (RR=34는 warn)
         return True
     # 2) 구조 요청(distress) + 낙상 정황
     if has_distress and fall >= 0.5:

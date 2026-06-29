@@ -119,7 +119,7 @@ def _categorize(inp):
     fall = float(inp.get("fall", {}).get("fall_score", 0))
     label = inp.get("env_sound", {}).get("env_sound_label", "silence")
     kws = inp.get("speech_ko", {}).get("keywords") or []
-    vital_crisis = (hr and (hr <= 40 or hr >= 130)) or (rr and (rr <= 5 or rr >= 34))
+    vital_crisis = (hr and (hr <= 40 or hr >= 130)) or (rr and (rr <= 5 or rr >= 35))
     doms = sum([bool(fall >= 0.5), bool(hr and (hr < 60 or hr > 100)),
                 bool(label in ("alarm", "impact")), bool(kws)])
     if vital_crisis:

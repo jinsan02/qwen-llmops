@@ -31,7 +31,8 @@ services:
       - qwen-network
 
   # GGUF(llama.cpp) M5 — `docker compose --profile gguf up ai-qwen-gguf`
-  # 대전제 변경: Q4_K_M, RPi5 8GB에 최적 (메모리 ~1.3GB / 빠른 CPU 추론)
+  # 배포 표준 = Q5_K_M (1000셋 Track B 0.988 — 경계 서맥 HR=36/40 미탐을 base 동급 회복).
+  # RPi5 8GB에 최적 (메모리 ~1.4GB / 빠른 CPU 추론). 롤백은 SLM_MODEL→qwen_15b_gguf(Q4).
   ai-qwen-gguf:
     build:
       context: .
@@ -46,7 +47,7 @@ services:
       - REDIS_HOST=db
       - SLM_MIN_INTERVAL_MS=5000
       - SLM_BACKEND=gguf
-      - SLM_MODEL=qwen_15b_gguf
+      - SLM_MODEL=qwen_15b_gguf_q5
       - SLM_TOKENIZER=qwen_15b
       - QWEN_GGUF_THREADS=4
     volumes:
@@ -67,7 +68,7 @@ services:
     env_file: .env
     environment:
       - SLM_BACKEND=${SLM_BACKEND:-gguf}
-      - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf}
+      - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf_q5}
       - SLM_TOKENIZER=qwen_15b
       - MODEL_PATH=/app/models
       - QWEN_GGUF_THREADS=4
