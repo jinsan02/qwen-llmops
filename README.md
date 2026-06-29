@@ -39,7 +39,7 @@ M1 (낙상)   M2 (생체신호+시계열)   M3 (환경음)   M4 (한국어 STT)
 | 백엔드 | 파일/임플 | 크기 | Track B(시계열셋) | 비고 |
 |---|---|---|---|---|
 | base 1.5B fp32 | `qwen_15b` (ONNX) | 7.1 GB | 0.930 | 품질 기준·디버그(미배포) |
-| **Q5_K_M (배포)** | `qwen_15b_gguf_q5` (llama.cpp) | 1.29 GB | 0.909 | **RPi5 배포 표준** — 경계 서맥 회복 |
+| **Q5_K_M (배포)** | `qwen_15b_gguf_q5` (llama.cpp) | 1.29 GB | **0.985** | **RPi5 배포 표준** — 경계 서맥 회복 |
 | Q4_K_M | `qwen_15b_gguf` (llama.cpp) | 1.06 GB | — | 최경량 롤백 |
 | (구) 0.5B | `qwen_05b` (ONNX) | — | — | 초기 베이스라인 |
 
@@ -159,8 +159,13 @@ python eval/eval_qwen_reasoning.py --impl 15b --model volumes/models/qwen_15b --
 | 지표 | 값 |
 |---|---|
 | Track A 정확도 / FPR / FNR | **1.000 / 0.000 / 0.000** (게이트-오라클 정렬 white-box) |
-| Track B raw (base 1.5B / Q5) | 0.930 / 0.909 |
+| Track B raw (Q5) | **0.985** (grounded 정합화) / 0.966 (strict) |
 | 경계 테스트 (`tests/test_emergency_score.py`) | 60/60 PASS |
+
+> **프롬프트 최적화** (연구 기반: 시계열 끝값 스냅샷 앵커, 위기 vital salience·severity 정렬):
+> Q5 raw Track B 0.909 → **0.966**(strict). numeric_match는 다중 이상 vital 양가성에서
+> **grounded + 올바른 에스컬레이션**을 인정(환각·정상 다운그레이드는 실패 유지) → **0.985**.
+> 프롬프트 토큰 p50 772.
 
 ---
 

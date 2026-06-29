@@ -254,10 +254,20 @@ class QwenLogic:
             findings.append("낙상감지")
         elif fall_score >= 0.5:
             findings.append(f"낙상위험({fall_score:.0%})")
-        if hr and (hr < 60 or hr > 100):
-            findings.append(f"심박이상(hr={hr:.0f})")
-        if rr and (rr < 12 or rr > 25):
-            findings.append(f"호흡이상(rr={rr:.0f})")
+        # 위기(≤40/≥130, ≤5/≥35)는 '위기'로, 경고는 '이상'으로 구분 — few-shot 어휘와 정렬(salience).
+        # 위기 vital을 경고 vital보다 앞에 배치 — 소형 모델의 primacy 편향상 먼저 나온 항목을
+        # 인용하므로, crisis RR이 warn HR 뒤에 묻혀 누락되던 문제를 해소한다.
+        _vit = []
+        if hr and (hr <= 40 or hr >= 130):
+            _vit.append((0, f"심박위기(hr={hr:.0f})"))
+        elif hr and (hr < 60 or hr > 100):
+            _vit.append((1, f"심박이상(hr={hr:.0f})"))
+        if rr and (rr <= 5 or rr >= 35):
+            _vit.append((0, f"호흡위기(rr={rr:.0f})"))
+        elif rr and (rr < 12 or rr > 25):
+            _vit.append((1, f"호흡이상(rr={rr:.0f})"))
+        _vit.sort(key=lambda x: x[0])   # 위기(0) → 경고(1)
+        findings.extend(f for _, f in _vit)
         if env_label in {"impact", "alarm"}:
             findings.append(f"위험음({env_label})")
         _kw_list = list(speech_ko.get("keywords") or [])
@@ -304,10 +314,11 @@ class QwenLogic:
                 return None
             q = max(1, len(vals) // 4)
             s0 = sum(vals[:q]) / q
-            s1 = sum(vals[-q:]) / q
-            d = s1 - s0
+            s1 = sum(vals[-q:]) / q          # 방향 판정용 분위수 평균
+            last = vals[-1]                  # 표시 끝값 = 실제 현재값(=스냅샷). 분위수 평균을
+            d = s1 - s0                      #   쓰면 스냅샷 위기값과 어긋나 모델이 추세값을 인용함.
             arrow = "상승" if d > 2 else "하강" if d < -2 else "안정"
-            return s0, s1, sum(vals) / len(vals), arrow
+            return s0, last, sum(vals) / len(vals), arrow
 
         ht = _trend(hrs)
         rt = _trend(rrs)
@@ -344,9 +355,9 @@ class QwenLogic:
     _SHOTS = [
         ("낙상:False(3%),심박:72,호흡:15,환경:silence,소견:정상",
          '{"risk_score":0.1,"risk_level":"normal","reason":"정상"}'),
-        ("낙상:False(0%),심박:130,호흡:16,환경:silence,소견:심박이상(hr=130)",
+        ("낙상:False(0%),심박:130,호흡:16,환경:silence,소견:심박위기(hr=130)",
          '{"risk_score":0.7,"risk_level":"warning","reason":"심박위기(hr=130)"}'),
-        ("낙상:False(0%),심박:72,호흡:4,환경:silence,소견:호흡이상(rr=4)",
+        ("낙상:False(0%),심박:72,호흡:4,환경:silence,소견:호흡위기(rr=4)",
          '{"risk_score":0.7,"risk_level":"warning","reason":"호흡위기(rr=4)"}'),
         # [A/B 제거 후보] 4-domain critical (85토큰, 최대) — 제거해 토큰 절감 테스트 중
         # ("낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상(hr=33),위험음(alarm)",
@@ -355,7 +366,7 @@ class QwenLogic:
          '{"risk_score":0.9,"risk_level":"critical","reason":"낙상위험+긴급키워드"}'),
         # 시계열 예시(악화 추세): [1h추세] 줄을 복사하지 말고 간결한 근거+추세 태그로 요약
         ("낙상:False(0%),심박:108,호흡:16,환경:silence,소견:심박이상(hr=108)\n"
-         "[1h추세] HR 75→106(상승,μ90) 경고12/30분",
+         "[1h추세] HR 75→108(상승,μ90) 경고12/30분",
          '{"risk_score":0.8,"risk_level":"warning","reason":"심박이상(hr=108)+악화추세"}'),
         # 시계열 예시(지속 경고): 추세는 안정이어도 경고가 오래 누적되면 warning
         ("낙상:False(0%),심박:66,호흡:10,환경:silence,소견:정상\n"

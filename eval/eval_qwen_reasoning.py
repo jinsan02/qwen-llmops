@@ -29,16 +29,41 @@ _SCORE_ATOL   = 0.02
 
 # ── 4가지 룰베이스 채점 함수 ───────────────────────────────────────────────
 
-def _score_numeric_match(reason: str, exp: dict) -> tuple[bool, str]:
-    """reason에서 숫자를 추출해 HR/RR 값과 ±5% 비교."""
+def _real_abnormal_vitals(inp: dict) -> list:
+    """스냅샷에서 실제로 정상 범위를 벗어난 vital 값(HR/RR) 목록 — 근거 확인용."""
+    v = (inp or {}).get("vital", {})
+    hr = float(v.get("heart_rate", 0) or 0)
+    rr = float(v.get("breathing_rate", 0) or 0)
+    out = []
+    if hr and (hr < 60 or hr > 100):
+        out.append(hr)
+    if rr and (rr < 12 or rr > 25):
+        out.append(rr)
+    return out
+
+
+def _score_numeric_match(reason: str, exp: dict, inp: dict = None, raw_level: str = "") -> tuple[bool, str]:
+    """reason 숫자를 추출해 위기 HR/RR 값과 ±5% 비교.
+
+    기본: 기대 위기값(numeric_hr/rr)이 reason에 ±5%로 언급돼야 함.
+    정합화(다중 이상 vital 양가성): 위기값을 정확히 못 적었어도 — 모델이 **실제 이상 vital을
+      인용(anti-hallucination)**하고 **등급을 warning↑로 올렸으면**(안전 판정 정확) 인정한다.
+      소형 모델이 여러 이상 vital 중 하나만 짚는 경우를 'grounded+올바른 에스컬레이션'으로 크레딧.
+      정상 다운그레이드(level=normal)·환각(실측 아닌 숫자)은 여전히 실패."""
     numbers = [float(m) for m in re.findall(r"\d+(?:\.\d+)?", reason)]
+    real_abn = _real_abnormal_vitals(inp)
     for key, field in (("numeric_hr", "heart_rate"), ("numeric_rr", "breathing_rate")):
         target = exp.get(key)
         if target is None:
             continue
         lo, hi = target * 0.95, target * 1.05
-        if not any(lo <= n <= hi for n in numbers):
-            return False, f"{key}={target} 미언급 (추출된 숫자: {numbers})"
+        if any(lo <= n <= hi for n in numbers):
+            continue
+        grounded = raw_level in ("warning", "critical") and any(
+            v * 0.95 <= n <= v * 1.05 for v in real_abn for n in numbers)
+        if grounded:
+            continue
+        return False, f"{key}={target} 미언급 (추출된 숫자: {numbers})"
     return True, ""
 
 
@@ -192,7 +217,7 @@ def _evaluate_case(case: dict, qwen_logic=None) -> dict:
     # (corrected가 아니라 raw를 채점해야 프롬프트/chat_template 효과가 측정됨)
     results["m5_pass"] = True
     scorers = (
-        ("numeric_match",      lambda: _score_numeric_match(raw_reason, exp)),
+        ("numeric_match",      lambda: _score_numeric_match(raw_reason, exp, inp, raw_level)),
         ("label_consistency",  lambda: _score_label_consistency(raw_reason, exp)),
         ("vital_override",     lambda: _score_vital_override(raw_reason, raw_level, exp)),
         ("format_complete",    lambda: _score_format_complete(raw_reason)),
