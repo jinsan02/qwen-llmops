@@ -235,51 +235,39 @@ class QwenLogic:
         self._hourly_cache_data = dict(context)
         return context
 
-    def _fetch_time_series(self, now_ts_ms=None, window_min=60):
-        """ai:result 이력(HR/RR)을 분 버킷 평균으로 모아 [{m,hr,rr}] 시계열 생성.
+    # rp5와 동일 — 분 집계 소스(heart_sum/heart_count/breathing_sum/breathing_count, TTL 60분)
+    _MINUTE_AGG_PREFIX = "agg:minute:"
 
-        운영(rp5) 경로 wiring: evaluate가 time_series 미지정 + redis_client 있을 때 자동 호출 →
-        평가 하니스는 명시 time_series, 운영은 Redis 이력에서 동일 구조 생성(이식 무손실).
-        Redis 없거나 데이터 없으면 None(스냅샷 전용 동작)."""
+    def _fetch_time_series(self, now_ts_ms=None, window_min=60):
+        """rp5 agg:minute(분 집계, TTL 60분) 이력 → [{m,hr,rr}] 시계열.
+
+        운영(rp5) wiring: ai:result는 36초 롤링 버퍼라 추세 소스로 부적합. 1h 추세는 rp5가
+        100Hz 인라인으로 누적하는 agg:minute:{epoch분}(heart_sum/heart_count …)에서 읽는다.
+        평가 하니스는 명시 time_series를 주입하므로 이 경로 안 탐(이식 무손실).
+        Redis 없거나 집계 없으면 None(스냅샷 전용 동작)."""
         if self.redis_client is None:
             return None
         now_ts_ms = int(now_ts_ms or (time.time() * 1000))
-        since_ts_ms = now_ts_ms - window_min * 60 * 1000
-        try:
-            entries = self.redis_client.xrevrange("ai:result", count=self.hourly_result_scan_limit)
-        except Exception:
-            return None
+        cur_min = now_ts_ms // 60000  # epoch 분 (rp5 minute_key = ts_ms // 60000)
 
-        buckets = {}  # 분 오프셋(0,-1,..) -> [hr합, hr수, rr합, rr수]
-        for msg_id, fields in entries:
-            ts_ms = _stream_id_ts_ms(msg_id)
-            if ts_ms < since_ts_ms:
-                break
-            payload_raw = fields.get(b"data", b"")
-            if isinstance(payload_raw, bytes):
-                payload_raw = payload_raw.decode("utf-8", errors="ignore")
-            try:
-                payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
-                continue
-            experts = payload.get("experts", {})
-            vital = experts.get("vital", {}) if isinstance(experts, dict) else {}
-            hr = _safe_float(vital.get("heart_rate"), default=-1.0)
-            rr = _safe_float(vital.get("breathing_rate"), default=-1.0)
-            m = -int((now_ts_ms - ts_ms) // 60000)   # 0=현재 분, -1=1분 전 …
-            b = buckets.setdefault(m, [0.0, 0, 0.0, 0])
-            if hr > 0:
-                b[0] += hr; b[1] += 1
-            if rr > 0:
-                b[2] += rr; b[3] += 1
+        def _bf(bucket, name):
+            v = bucket.get(name.encode()) if name.encode() in bucket else bucket.get(name)
+            return _safe_float(v.decode() if isinstance(v, bytes) else v, default=0.0)
 
         rows = []
-        for m in sorted(buckets):
-            b = buckets[m]
-            hr = b[0] / b[1] if b[1] else 0.0
-            rr = b[2] / b[3] if b[3] else 0.0
+        for k in range(window_min - 1, -1, -1):   # 오래된(-59) → 최근(0)
+            try:
+                bucket = self.redis_client.hgetall(f"{self._MINUTE_AGG_PREFIX}{cur_min - k}")
+            except Exception:
+                return None
+            if not bucket:
+                continue
+            hc = _bf(bucket, "heart_count")
+            bc = _bf(bucket, "breathing_count")
+            hr = _bf(bucket, "heart_sum") / hc if hc > 0 else 0.0
+            rr = _bf(bucket, "breathing_sum") / bc if bc > 0 else 0.0
             if hr > 0 or rr > 0:
-                rows.append({"m": m, "hr": int(round(hr)), "rr": int(round(rr))})
+                rows.append({"m": -k, "hr": int(round(hr)), "rr": int(round(rr))})
         return rows[-60:] if rows else None
 
     def _state_line(self, expert_results, context_window=None, hourly_context=None):
@@ -834,7 +822,7 @@ class QwenLogic:
 
         self._ensure_model_loaded()
         hourly_context = self._fetch_hourly_context()
-        # 운영 wiring: 명시 time_series 없고 Redis 연결됐으면 ai:result 이력에서 자동 생성.
+        # 운영 wiring: 명시 time_series 없고 Redis 연결됐으면 agg:minute(분 집계)에서 자동 생성.
         # (평가 하니스는 time_series를 명시 주입하므로 이 분기 안 탐 — 이식 무손실)
         if time_series is None and self.redis_client is not None:
             time_series = self._fetch_time_series()
