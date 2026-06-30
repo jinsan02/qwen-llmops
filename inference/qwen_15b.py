@@ -235,6 +235,53 @@ class QwenLogic:
         self._hourly_cache_data = dict(context)
         return context
 
+    def _fetch_time_series(self, now_ts_ms=None, window_min=60):
+        """ai:result 이력(HR/RR)을 분 버킷 평균으로 모아 [{m,hr,rr}] 시계열 생성.
+
+        운영(rp5) 경로 wiring: evaluate가 time_series 미지정 + redis_client 있을 때 자동 호출 →
+        평가 하니스는 명시 time_series, 운영은 Redis 이력에서 동일 구조 생성(이식 무손실).
+        Redis 없거나 데이터 없으면 None(스냅샷 전용 동작)."""
+        if self.redis_client is None:
+            return None
+        now_ts_ms = int(now_ts_ms or (time.time() * 1000))
+        since_ts_ms = now_ts_ms - window_min * 60 * 1000
+        try:
+            entries = self.redis_client.xrevrange("ai:result", count=self.hourly_result_scan_limit)
+        except Exception:
+            return None
+
+        buckets = {}  # 분 오프셋(0,-1,..) -> [hr합, hr수, rr합, rr수]
+        for msg_id, fields in entries:
+            ts_ms = _stream_id_ts_ms(msg_id)
+            if ts_ms < since_ts_ms:
+                break
+            payload_raw = fields.get(b"data", b"")
+            if isinstance(payload_raw, bytes):
+                payload_raw = payload_raw.decode("utf-8", errors="ignore")
+            try:
+                payload = json.loads(payload_raw) if payload_raw else {}
+            except Exception:
+                continue
+            experts = payload.get("experts", {})
+            vital = experts.get("vital", {}) if isinstance(experts, dict) else {}
+            hr = _safe_float(vital.get("heart_rate"), default=-1.0)
+            rr = _safe_float(vital.get("breathing_rate"), default=-1.0)
+            m = -int((now_ts_ms - ts_ms) // 60000)   # 0=현재 분, -1=1분 전 …
+            b = buckets.setdefault(m, [0.0, 0, 0.0, 0])
+            if hr > 0:
+                b[0] += hr; b[1] += 1
+            if rr > 0:
+                b[2] += rr; b[3] += 1
+
+        rows = []
+        for m in sorted(buckets):
+            b = buckets[m]
+            hr = b[0] / b[1] if b[1] else 0.0
+            rr = b[2] / b[3] if b[3] else 0.0
+            if hr > 0 or rr > 0:
+                rows.append({"m": m, "hr": int(round(hr)), "rr": int(round(rr))})
+        return rows[-60:] if rows else None
+
     def _state_line(self, expert_results, context_window=None, hourly_context=None):
         """expert 출력 → '낙상:..,심박:..,호흡:..,환경:..,소견:..' 한 줄 + 소견 문자열."""
         fall = expert_results.get("fall", {})
@@ -787,6 +834,10 @@ class QwenLogic:
 
         self._ensure_model_loaded()
         hourly_context = self._fetch_hourly_context()
+        # 운영 wiring: 명시 time_series 없고 Redis 연결됐으면 ai:result 이력에서 자동 생성.
+        # (평가 하니스는 time_series를 명시 주입하므로 이 분기 안 탐 — 이식 무손실)
+        if time_series is None and self.redis_client is not None:
+            time_series = self._fetch_time_series()
 
         qwen_infer_ms = None
         parsed_response = None
