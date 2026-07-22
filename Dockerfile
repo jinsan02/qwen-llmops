@@ -36,8 +36,9 @@ RUN grep -viE '^onnxruntime|^optimum' requirements.txt > requirements.gguf.txt \
 
 COPY . .
 
+# 배포 표준 = Q5_K_M (경계 서맥 안전 마진). 롤백은 SLM_MODEL=qwen_15b_gguf(Q4)
 ENV SLM_BACKEND=gguf \
-    SLM_MODEL=qwen_15b_gguf \
+    SLM_MODEL=qwen_15b_gguf_q5 \
     SLM_TOKENIZER=qwen_15b
 
 CMD ["python", "service/qwen_service.py"]

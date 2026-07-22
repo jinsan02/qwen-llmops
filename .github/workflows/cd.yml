@@ -1,0 +1,72 @@
+name: CD
+
+# 배포 타깃 = Raspberry Pi 5 (linux/arm64). PUBLIC 레포라 GitHub 네이티브 ARM 러너를
+# 무료로 쓸 수 있어 QEMU 에뮬레이션 없이 빌드한다(gguf-runtime은 llama-cpp-python을
+# 소스 컴파일하므로 에뮬레이션 빌드는 비현실적).
+#
+# 트리거: 버전 태그(v*) 푸시 또는 수동 실행. main 매 푸시엔 돌지 않는다(빌드 비용).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04-arm      # RPi5와 동일 아키텍처(네이티브)
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 태그 메타데이터
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=SafeWave-AI M5 (Qwen SLM)
+            org.opencontainers.image.description=Qwen2.5-1.5B GGUF Q5_K_M 응급 판단 M5 — RPi5(arm64) 배포본
+
+      - name: 빌드 & 푸시 (gguf-runtime, linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: gguf-runtime
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 스모크 — 이미지 임포트 확인
+        run: |
+          docker run --rm --entrypoint python \
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest \
+            -c "from inference.emergency_score import compute_emergency_score; \
+                s,_ = compute_emergency_score({'vital':{'heart_rate':36,'breathing_rate':16}}); \
+                assert s >= 0.6, s; print('smoke OK score=%.2f' % s)"
+
+      - name: 요약
+        run: |
+          echo "### 배포 이미지" >> $GITHUB_STEP_SUMMARY
+          echo "\`${{ env.REGISTRY }}/${{ env.IMAGE }}:latest\` (linux/arm64, gguf-runtime)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "RPi5에서: \`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest\`" >> $GITHUB_STEP_SUMMARY

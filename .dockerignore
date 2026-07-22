@@ -1,0 +1,22 @@
+# 빌드 컨텍스트 축소 — 특히 volumes/(모델 수 GB)가 들어가면 빌드가 급격히 느려진다.
+.git
+.github
+.gitignore
+
+# 모델·산출물 (런타임에 볼륨 마운트)
+volumes/
+reports/
+docs/
+*.log
+
+# 파이썬 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 로컬 설정
+.env
+.claude/
+CLAUDE.md

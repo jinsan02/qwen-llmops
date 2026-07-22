@@ -73,7 +73,9 @@ qwen_llmops/
 ├── docs/
 │   ├── model_card.md        # 배포 모델 명세
 │   └── ops_runbook.md       # 롤백·모니터링·드리프트 런북
-├── .github/workflows/ci.yml # CI(경계테스트 + eval mock 게이트)
+├── .github/workflows/
+│   ├── ci.yml               # CI(경계테스트 + eval mock 게이트)
+│   └── cd.yml               # CD(태그 → GHCR arm64 이미지 빌드·푸시)
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -185,7 +187,13 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
 | `GET /metrics` | Prometheus 텍스트 노출 (`/metrics.json`은 JSON) |
 | `GET /docs` | 스키마 |
 
-- **CI**: `.github/workflows/ci.yml` — py_compile + 경계테스트 53 + **eval mock 게이트(Track A 회귀)**, numpy만 설치.
+- **CI**: `.github/workflows/ci.yml` — py_compile + 경계테스트 60(시계열 포함) + **eval mock 게이트(Track A 회귀)**, numpy만 설치.
+- **CD**: `.github/workflows/cd.yml` — 버전 태그(`v*`) 푸시 시 **GHCR에 RPi5용 이미지 빌드·푸시**.
+  네이티브 ARM 러너(`ubuntu-24.04-arm`)로 `linux/arm64` 직접 빌드(QEMU 없음) + 임포트 스모크 테스트.
+  ```bash
+  # RPi5에서 배포본 받기
+  docker pull ghcr.io/jinsan02/qwen-llmops:latest
+  ```
 - **거버넌스/롤백**: [`docs/ops_runbook.md`](docs/ops_runbook.md) — `SLM_MODEL` env 한 줄로 Q5↔Q4↔base 전환.
 - **드리프트**: `python scripts/check_drift.py` — 운영 `ai:emergency` 등급분포 vs baseline.
 
