@@ -24,9 +24,9 @@ jobs:
             inference/emergency_score.py inference/qwen_15b.py inference/qwen_gguf.py \
             eval/eval_qwen_reasoning.py service/api.py \
             scripts/gen_golden_set.py scripts/gen_golden_set_v2.py scripts/gen_golden_set_v3.py \
-            scripts/analyze_backends.py scripts/check_drift.py
+            scripts/analyze_backends.py scripts/check_drift.py scripts/bench_latency.py
 
-      - name: 경계값 테스트 (emergency_score 53케이스)
+      - name: 경계값 테스트 (emergency_score 60케이스 — 시계열 포함)
         run: python tests/test_emergency_score.py
 
       - name: Eval 게이트 — Track A 회귀 (mock, 모델 불필요)

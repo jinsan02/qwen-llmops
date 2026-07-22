@@ -65,7 +65,8 @@ qwen_llmops/
 │   ├── gen_golden_set_v3.py     # 시계열 골든셋 생성기(현행)
 │   ├── gen_golden_set_v2.py     # 스냅샷 노인분포 생성기
 │   ├── export_qwen_gguf.py      # fp32 → GGUF 변환
-│   └── check_drift.py           # 운영 등급분포 드리프트 점검(Ops)
+│   ├── check_drift.py           # 운영 등급분포 드리프트 점검(Ops)
+│   └── bench_latency.py         # prefill/decode 분리 측정 + RPi5 투영
 ├── service/
 │   ├── api.py               # FastAPI 서빙(/evaluate·/feedback·/health·/metrics)
 │   └── qwen_service.py      # Redis 스트림 소비 루프
