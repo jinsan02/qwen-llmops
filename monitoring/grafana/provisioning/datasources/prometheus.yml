@@ -1,0 +1,10 @@
+# Grafana 데이터소스 as-code (클릭 설정 금지 — 재현·리뷰 가능하게)
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

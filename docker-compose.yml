@@ -80,6 +80,53 @@ services:
     networks:
       - qwen-network
 
+  # ── 모니터링 풀스택 (opt-in) — `docker compose --profile monitoring up -d` ──
+  # RPi5 제약 반영: 기본 배포엔 안 뜸(profile), 보존 7d/512MB 상한으로 SD 마모 제한.
+  # 운영 권장: 이 스택을 오프디바이스에서 띄우고 Pi의 :8000/metrics를 원격 스크래핑.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: qwen-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - qwen-network
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: qwen-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    volumes:
+      # 데이터소스·대시보드는 코드로 프로비저닝(클릭 설정 금지)
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - qwen-network
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
 networks:
   qwen-network:
     driver: bridge

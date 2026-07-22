@@ -1,0 +1,120 @@
+{
+  "uid": "m5-llmops",
+  "title": "M5 (Qwen SLM) — LLMOps",
+  "tags": ["llmops", "m5", "qwen"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "모델 로드 상태",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "m5_model_loaded", "legendFormat": "loaded" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "M5 호출률 (게이트 통과)",
+      "description": "전체 /evaluate 중 M5(SLM)까지 간 비율. 높으면 게이트가 헐겁거나 위기 상황.",
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "m5_call_rate", "legendFormat": "call rate" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3 } }
+    },
+    {
+      "type": "stat",
+      "title": "latency p95",
+      "description": "SLO 기준: M5 게이트 간격 5s 이내",
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(m5_latency_ms_bucket[5m])))", "legendFormat": "p95" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 3000 }, { "color": "red", "value": 5000 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "오류(5m)",
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum(increase(m5_errors_total[5m]))", "legendFormat": "errors" }],
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "누적 요청",
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "m5_requests_total", "legendFormat": "requests" }]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "위험 등급 분포 (드리프트 신호)",
+      "description": "normal/warning/critical 비율이 baseline(응급 ~33%)에서 벗어나면 드리프트 의심 → scripts/check_drift.py",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum by (level) (rate(m5_level_total[5m]))", "legendFormat": "{{level}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 25, "stacking": { "mode": "normal" } } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "latency 분위 (p50 / p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(m5_latency_ms_bucket[5m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(m5_latency_ms_bucket[5m])))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "토큰 사용량 (비용)",
+      "description": "출력 토큰이 latency를 지배(27.5ms/토큰) — 입력은 프리픽스 캐시로 워밍 시 영향 적음",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(m5_prompt_tokens_total[5m])", "legendFormat": "prompt tok/s" },
+        { "expr": "rate(m5_output_tokens_total[5m])", "legendFormat": "output tok/s" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "보호자 피드백 (품질 신호)",
+      "description": "false_alarm 증가 = 오탐↑ / missed_alert = 미탐. POST /feedback → 다음 추론 보정",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum by (type) (increase(m5_feedback_total[1h]))", "legendFormat": "{{type}}" }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } } }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0
+      }
+    ]
+  }
+}

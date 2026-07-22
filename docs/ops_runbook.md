@@ -23,10 +23,21 @@ python eval/eval_qwen_reasoning.py --mock --golden data/qwen_golden_set.jsonl --
 ```
 `/health`의 `model_sha`(핑거프린트)가 의도한 모델과 일치하는지 확인.
 
-## 모니터링
-- `GET /metrics` — Prometheus 텍스트(외부 Prometheus가 스크랩). `GET /metrics.json` — 사람이 읽는 JSON.
-- 핵심 지표: `m5_requests_total`, `m5_called_total`, `m5_errors_total`, `m5_level_total{level}`, `m5_call_rate`, `m5_avg_latency_ms`, `m5_model_loaded`.
+## 모니터링 (Prometheus + Grafana)
+```bash
+docker compose --profile monitoring up -d      # Prometheus :9090 · Grafana :3000 (admin/admin)
+```
+- Grafana 대시보드 **LLMOps / M5 (Qwen SLM)** 자동 프로비저닝(코드 원본: `monitoring/grafana/dashboards/m5_llmops.json`, UI 수정 불가).
+- 패널: 모델 로드·M5 호출률·latency p50/p95·오류·등급분포(드리프트)·토큰 사용량·보호자 피드백.
+- `GET /metrics` Prometheus 텍스트 / `GET /metrics.json` 사람이 읽는 JSON.
+- 핵심 지표: `m5_requests_total`·`m5_called_total`·`m5_errors_total`·`m5_level_total{level}`·`m5_feedback_total{type}`·
+  **`m5_latency_ms_bucket`(히스토그램 → p95)**·`m5_prompt_tokens_total`·`m5_output_tokens_total`·`m5_model_loaded`.
 - Redis(`REDIS_HOST` 설정 시) `m5:metrics:snapshot`에 1h 롤링 스냅샷 지속(TTL 3600) — 재기동 복원.
+
+**RPi5 운영 주의**: 모니터링은 `--profile monitoring` opt-in이라 기본 배포엔 안 뜬다.
+Prometheus 보존은 **7d / 512MB 상한**으로 SD 마모를 제한. 부하·마모를 아예 없애려면
+**모니터링 스택을 오프디바이스에서 띄우고** Pi의 `:8000/metrics`를 원격 스크래핑
+(`monitoring/prometheus.yml`의 `m5-api-remote` 주석 참고).
 
 ## 피드백 루프
 - `POST /feedback {"feedback":"false_alarm|missed_alert|confirm"}` → Redis `mqtt:feedback:last`(TTL 3600).

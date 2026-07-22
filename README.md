@@ -194,6 +194,10 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
   # RPi5에서 배포본 받기
   docker pull ghcr.io/jinsan02/qwen-llmops:latest
   ```
+- **모니터링 풀스택**: `docker compose --profile monitoring up -d` → Prometheus(:9090) + Grafana(:3000).
+  대시보드는 **코드로 프로비저닝**(`monitoring/grafana/dashboards/m5_llmops.json`) — M5 호출률·latency p50/p95·
+  등급분포(드리프트)·토큰 비용·보호자 피드백. RPi5 제약상 **opt-in 프로필** + 보존 7d/512MB 상한
+  (선정 근거·대안 비교는 `docs/ops_runbook.md`).
 - **거버넌스/롤백**: [`docs/ops_runbook.md`](docs/ops_runbook.md) — `SLM_MODEL` env 한 줄로 Q5↔Q4↔base 전환.
 - **드리프트**: `python scripts/check_drift.py` — 운영 `ai:emergency` 등급분포 vs baseline.
 

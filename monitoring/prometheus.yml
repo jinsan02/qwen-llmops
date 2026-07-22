@@ -1,0 +1,20 @@
+# Prometheus 스크래핑 설정 — M5 서빙 API의 /metrics
+# RPi5 제약: 스크래핑 간격 15s(과다 쓰기 방지), 보존은 실행 인자로 7d/512MB 상한.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: qwen-llmops
+
+scrape_configs:
+  - job_name: m5-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: m5
+
+  # 오프디바이스 운영 시: RPi5의 /metrics를 원격 스크래핑(Pi 부하·SD 마모 0)
+  # - job_name: m5-api-remote
+  #   static_configs:
+  #     - targets: ["<rpi5-host>:8000"]
