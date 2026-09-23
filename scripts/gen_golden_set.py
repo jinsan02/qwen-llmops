@@ -2,7 +2,7 @@
 qwen_golden_set.jsonl 생성기 (100케이스, 화이트박스 경계값 분석 지향).
 
 - score_min/score_max는 compute_emergency_score 실제 출력에서 ±window로 산출(산술 오류 방지).
-- ground_truth_emergency는 코드와 독립적인 '임상/상식' 오라클로 부여 → 정확도/오탐율/미탐율 측정용.
+- ground_truth_emergency는 생성 규칙의 합성 정책 라벨로 부여 → white-box 일관성·회귀 측정용(임상 오라클 아님).
 - 기존 40케이스는 입력/메타를 유지하고 ground_truth_emergency만 주입.
 
 실행:

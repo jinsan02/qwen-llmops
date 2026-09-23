@@ -36,7 +36,7 @@ RUN grep -viE '^onnxruntime|^optimum' requirements.txt > requirements.gguf.txt \
 
 COPY . .
 
-# 배포 표준 = Q5_K_M (경계 서맥 안전 마진). 롤백은 SLM_MODEL=qwen_15b_gguf(Q4)
+# 배포 후보 = Q5_K_M (합성 경계 서맥 케이스 통과). RPi5 실기 검증 전이며 롤백 후보는 SLM_MODEL=qwen_15b_gguf(Q4)
 ENV SLM_BACKEND=gguf \
     SLM_MODEL=qwen_15b_gguf_q5 \
     SLM_TOKENIZER=qwen_15b

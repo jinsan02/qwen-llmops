@@ -31,8 +31,8 @@ services:
       - qwen-network
 
   # GGUF(llama.cpp) M5 — `docker compose --profile gguf up ai-qwen-gguf`
-  # 배포 표준 = Q5_K_M (1000셋 Track B 0.988 — 경계 서맥 HR=36/40 미탐을 base 동급 회복).
-  # RPi5 8GB에 최적 (메모리 ~1.4GB / 빠른 CPU 추론). 롤백은 SLM_MODEL→qwen_15b_gguf(Q4).
+  # 배포 후보 = Q5_K_M (합성 스냅샷셋 162/164; 경계 서맥 HR=36/40 케이스 통과).
+  # RPi5 실기 메모리/latency는 미검증. 롤백 후보는 SLM_MODEL→qwen_15b_gguf(Q4).
   ai-qwen-gguf:
     build:
       context: .

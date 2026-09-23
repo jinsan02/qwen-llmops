@@ -155,7 +155,7 @@ def _qmean(vals):
 
 
 def ground_truth_temporal(snapshot, series):
-    """스냅샷 임상 오라클 OR 시계열 트리거(지속 경고/점진 악화). compute_emergency_score와 독립."""
+    """스냅샷 합성 정책 라벨 OR 시계열 트리거(지속 경고/점진 악화). 임상 오라클이 아니다."""
     if G.ground_truth(snapshot):
         return True
     if not series or len(series) < 10:

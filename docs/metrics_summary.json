@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-09-02",
+  "purpose": "provenance summary derived from local gitignored raw response dumps; no model inference was rerun",
+  "golden_set": {
+    "path": "data/qwen_golden_set.jsonl",
+    "sha256": "44465052437811774E6D0DAB2CF9C0E04D4772AE28A9F9632832A54D18566AD4",
+    "scope": "1000 synthetic in-distribution cases; not held-out or clinical data"
+  },
+  "method": {
+    "grounded_pass": "existing m5_pass=true in each stored raw dump",
+    "strict_pass": "grounded pass plus every non-null expected numeric_hr/numeric_rr appearing in raw_reason within +/-5%; strict_pass was not stored in the original dumps",
+    "latency_percentile": "nearest-rank over non-null qwen_infer_ms: sorted[ceil(p*n)-1]",
+    "warning": "run-condition metadata is insufficient for causal comparison between dates; raw reports are gitignored and not publicly auditable from the repository"
+  },
+  "runs": [
+    {
+      "source": "reports/qwen_responses_20260629.json",
+      "sha256": "CD99559FBBAAFE786303894053DE25CBF4B48753E5350161BBF9B61715453FFB",
+      "called_n": 328,
+      "grounded_pass_n": 323,
+      "grounded_rate": 0.984756097560976,
+      "strict_pass_n": 317,
+      "strict_rate": 0.966463414634146,
+      "qwen_infer_ms_n": 328,
+      "qwen_infer_ms_p50": 1431.78,
+      "qwen_infer_ms_p95": 1757.67,
+      "prompt_tokens_median": 772
+    },
+    {
+      "source": "reports/qwen_responses_20260630.json",
+      "sha256": "CFBFE3F2055D53DC9E50DE57D394B2C4CC57554176E8536EA107360F302D5331",
+      "called_n": 328,
+      "grounded_pass_n": 323,
+      "grounded_rate": 0.984756097560976,
+      "strict_pass_n": 317,
+      "strict_rate": 0.966463414634146,
+      "qwen_infer_ms_n": 328,
+      "qwen_infer_ms_p50": 2535.1,
+      "qwen_infer_ms_p95": 3214.57,
+      "prompt_tokens_median": 772
+    },
+    {
+      "source": "reports/qwen_responses_gguf_q5_1000.json",
+      "sha256": "06FE8CE18414D000B9311B70810AC3728806E25F3F23D656B32E2DC1E5C72F61",
+      "called_n": 164,
+      "grounded_pass_n": 162,
+      "grounded_rate": 0.98780487804878,
+      "strict_pass_n": 152,
+      "strict_rate": 0.926829268292683,
+      "qwen_infer_ms_n": 164,
+      "qwen_infer_ms_p50": 1080.48,
+      "qwen_infer_ms_p95": 1522.83,
+      "prompt_tokens_median": 530
+    },
+    {
+      "source": "reports/qwen_responses_15b_1000.json",
+      "sha256": "A1CA4961DEACDA649D920D87B7E9485C4823B5F339E06D47A8F6CCA7AF0D6772",
+      "called_n": 164,
+      "grounded_pass_n": 164,
+      "grounded_rate": 1.0
+    },
+    {
+      "source": "reports/qwen_responses_gguf_1000.json",
+      "sha256": "444B261BB8AD184F2AFA6EBAA333EDFE9BD379B051B2D3537FA17311B87952B7",
+      "called_n": 164,
+      "grounded_pass_n": 160,
+      "grounded_rate": 0.975609756097561
+    }
+  ]
+}

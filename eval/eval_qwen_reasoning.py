@@ -49,7 +49,7 @@ def _score_numeric_match(reason: str, exp: dict, inp: dict = None, raw_level: st
     정합화(다중 이상 vital 양가성): 위기값을 정확히 못 적었어도 — 모델이 **실제 이상 vital을
       인용(anti-hallucination)**하고 **등급을 warning↑로 올렸으면**(안전 판정 정확) 인정한다.
       소형 모델이 여러 이상 vital 중 하나만 짚는 경우를 'grounded+올바른 에스컬레이션'으로 크레딧.
-      정상 다운그레이드(level=normal)·환각(실측 아닌 숫자)은 여전히 실패."""
+      정상 다운그레이드(level=normal)·환각(입력에 없는 숫자)은 여전히 실패."""
     numbers = [float(m) for m in re.findall(r"\d+(?:\.\d+)?", reason)]
     real_abn = _real_abnormal_vitals(inp)
     for key, field in (("numeric_hr", "heart_rate"), ("numeric_rr", "breathing_rate")):

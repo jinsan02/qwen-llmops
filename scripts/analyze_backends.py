@@ -312,7 +312,7 @@ def _emit(date_str, rob_rows, tok_rows, dis_rows, n_common, agree_rate, pb_block
 <div class="header"><div class="container">
  <div class="badge">M5 Robustness & Token Analysis</div>
  <h1>SafeWave-AI — M5 강건성·토큰 분석</h1>
- <p class="sub">골든셋 {n_cases}(clean↔noisy {n_cases//2}쌍, 노인 실측분포+모순신호) · 백엔드: {esc_join(backends)} · {date_str}</p>
+ <p class="sub">골든셋 {n_cases}(clean↔noisy {n_cases//2}쌍, 문헌 분포 모사 합성표본+모순신호) · 백엔드: {esc_join(backends)} · {date_str}</p>
 </div></div>
 <div class="container">
 
