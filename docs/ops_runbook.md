@@ -30,14 +30,14 @@ docker compose --profile monitoring up -d      # Prometheus :9090 · Grafana :30
 API_PORT=18000 docker compose --profile api --profile monitoring up -d db api prometheus grafana
 python scripts/monitoring_smoke.py --url http://localhost:18000 --n 60 --feedback 6   # 합성 트래픽으로 패널 채우기
 ```
-- **2026-09-25 기동 확인**: 4컨테이너 기동, `/health` ok·model_loaded, Prometheus 타깃 up, 8패널 전부 값 표시
+- **2026-09-25 기동 확인**: 4컨테이너 기동, `/health` ok·model_loaded, Prometheus 타깃 up, 9패널 전부 값 표시
   ([스크린샷](img/grafana_m5_llmops_20260925.png)). 이때 발견·수정한 결함: gguf-runtime 이미지에 onnxruntime이 없는데
   `qwen_15b.py`가 최상단에서 import해 **M5 로드 실패 → `/health status=degraded`**(룰 게이트만 동작). import를
   ONNX 로드 함수 안으로 옮겼고, CI·CD 스모크에 `from inference.qwen_gguf import QwenLogic`를 추가했다.
   그 전에 CD가 올린 이미지(07-22)는 이 결함이 있었고, **2026-09-25 CD 수동 실행으로 `latest`를 교체**했다
   ([실행 기록](https://github.com/jinsan02/qwen-llmops/actions/runs/36030626271), 이미지 내부 스모크 통과).
 - Grafana 대시보드 **LLMOps / M5 (Qwen SLM)** 자동 프로비저닝(코드 원본: `monitoring/grafana/dashboards/m5_llmops.json`, UI 수정 불가).
-- 패널: 모델 로드·M5 호출률·latency p50/p95·오류·등급분포(드리프트)·토큰 사용량·보호자 피드백.
+- 패널: 모델 로드·M5 호출률·latency p50/p95·오류·누적 요청·등급분포(드리프트)·토큰 사용량·보호자 피드백.
 - `GET /metrics` Prometheus 텍스트 / `GET /metrics.json` 사람이 읽는 JSON.
 - 핵심 지표: `m5_requests_total`·`m5_called_total`·`m5_errors_total`·`m5_level_total{level}`·`m5_feedback_total{type}`·
   **`m5_latency_ms_bucket`(히스토그램 → p95)**·`m5_prompt_tokens_total`·`m5_output_tokens_total`·`m5_model_loaded`.

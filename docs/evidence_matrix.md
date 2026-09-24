@@ -34,9 +34,9 @@
 | 룰 게이트 latency ~2.4ms(warm) | ✅ | ❌ | — | ❌ | `docs/bench_result_20260624.json`(개발 PC) · `scripts/bench_latency.py` |
 | RPi5 latency/메모리 투영 | ✅ | ❌ | — | ❌ | `scripts/bench_latency.py --project` **근사치만**. 실기 로그로 대체 필요 |
 | FastAPI 서빙 `/evaluate·/health·/metrics·/feedback` | ✅ | ⚠️ | — | ❌ | `service/api.py` — CI 통합테스트 없음. 2026-09-25 도커 수동 기동: `/health` ok, 스모크 `/evaluate` 60·`/feedback` 6 오류 0. 이때 **gguf 이미지 M5 로드 실패(onnxruntime 최상단 import) 결함 발견·수정** |
-| CI (경계73 + Track A mock 게이트) | ✅ | ✅ | — | — | `.github/workflows/ci.yml` · [CI #10 성공, 13초](https://github.com/jinsan02/qwen-llmops/actions/runs/29954017086) |
+| CI (문법·M5 import·경계73·Track A mock·Track R 스모크) | ✅ | ✅ | — | — | `.github/workflows/ci.yml` · [CI 성공, 14초 (`d84d0a4`)](https://github.com/jinsan02/qwen-llmops/actions/runs/36031245845) |
 | CD (GHCR arm64 이미지 빌드·푸시) | ✅ | ✅ | — | ❌ | `.github/workflows/cd.yml` · [CD #1 성공, 3m39s](https://github.com/jinsan02/qwen-llmops/actions/runs/29953228399). **Delivery+이미지 스모크까지만**; 실기 pull·기동 로그 없음. CD #1 이미지는 M5 로드 실패 결함 포함(당시 스모크가 `emergency_score`만 import) → [09-25 재빌드](https://github.com/jinsan02/qwen-llmops/actions/runs/36030626271)로 `latest` 교체, 강화 스모크(`qwen_gguf` import·`llama_cpp` 로드) 통과 |
-| 모니터링 (Prometheus + Grafana) | ✅ | ⚠️ | — | ❌ | 2026-09-25 개발 PC 도커 **수동 기동 1회**: 타깃 up, 코드 프로비저닝, 합성 스모크 60건으로 8패널 값 표시 — [스크린샷](img/grafana_m5_llmops_20260925.png). CI 자동 검증 아님, RPi5·운영 데이터 아님 |
+| 모니터링 (Prometheus + Grafana) | ✅ | ⚠️ | — | ❌ | 2026-09-25 개발 PC 도커 **수동 기동 1회**: 타깃 up, 코드 프로비저닝, 합성 스모크 60건으로 9패널 값 표시 — [스크린샷](img/grafana_m5_llmops_20260925.png). CI 자동 검증 아님, RPi5·운영 데이터 아님 |
 | 보호자 피드백 루프 | ✅ | ❌ | — | ❌ | `service/api.py::/feedback` — 기능 구현. **실사용 피드백 데이터 없음** |
 | 드리프트 점검 `check_drift.py` | ✅ | ❌ | ⚠️ | ❌ | baseline은 합성 골든셋 분포. **실운영 `ai:emergency` 스트림 실적 없음** |
 | 거버넌스(model_card·runbook·model_sha 롤백) | ✅ | ❌ | — | ❌ | `docs/model_card.md` · `docs/ops_runbook.md` · `/health` 핑거프린트 |

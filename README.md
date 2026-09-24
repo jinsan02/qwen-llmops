@@ -25,7 +25,7 @@
 | 룰 게이트 | 구현 · 경계 테스트 73/73 · rp5 게이트와 무작위 20,000건 불일치 0 | `tests/`, [rp5 동기화](docs/rp5_sync_20260925.md) |
 | M5 (Q5_K_M) Track B | strict **317/328** · grounded **323/328** (합성 시계열셋) | [현재 성능](#현재-성능-1000-시계열셋) |
 | M5 Track R (판정표 준수율) | M2 켬 **77/98** · M2 꺼짐 **70/102** — 오답 전부 과대 | `eval/eval_track_r.py` |
-| 서빙 · 모니터링 | 개발 PC 도커 기동 확인(API·Redis·Prometheus·Grafana), 8패널 값 표시 | [스크린샷](docs/img/grafana_m5_llmops_20260925.png) |
+| 서빙 · 모니터링 | 개발 PC 도커 기동 확인(API·Redis·Prometheus·Grafana), 9패널(stat 5·시계열 4) 값 표시 | [스크린샷](docs/img/grafana_m5_llmops_20260925.png) |
 | CI / CD | CI: 문법·M5 import·경계 테스트·Track A mock·Track R 스모크 / CD: arm64 이미지 → GHCR (`latest` 09-25 재빌드, M5 로드 결함 수정본) | `.github/workflows/` |
 | RPi5 실기 | **미측정** — 지연·메모리는 개발 PC 값뿐 | [근거 매트릭스](docs/evidence_matrix.md) |
 
@@ -105,7 +105,7 @@ qwen_llmops/
 │   ├── evidence_matrix.md   # 주장별 근거 등급(구현/자동검증/합성평가/실기기)
 │   └── rp5_sync_20260925.md # rp5 M5 09-24 작업 동기화·검토 결과
 ├── .github/workflows/
-│   ├── ci.yml               # CI(경계테스트 + eval mock 게이트)
+│   ├── ci.yml               # CI(문법·M5 import·경계테스트 73·Track A mock·Track R 스모크)
 │   └── cd.yml               # CD(태그·수동 → GHCR arm64 이미지 빌드·푸시 + 이미지 내부 스모크)
 ├── docker-compose.yml
 └── requirements.txt
@@ -239,7 +239,7 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
 | `GET /metrics` | Prometheus 텍스트 노출 (`/metrics.json`은 JSON) |
 | `GET /docs` | 스키마 |
 
-- **CI**: `.github/workflows/ci.yml` — py_compile + 경계테스트 60(시계열 포함) + **eval mock 게이트(Track A 회귀)**, numpy만 설치. [CI #10 성공(13초)](https://github.com/jinsan02/qwen-llmops/actions/runs/29954017086).
+- **CI**: `.github/workflows/ci.yml` — numpy만 설치하고 5단계를 돈다: 문법 검사 → M5 모듈 import(onnxruntime·llama_cpp 없이, gguf 이미지 degraded 회귀 방지) → 경계값 테스트 73케이스(게이트·판정표) → eval mock 게이트(Track A 회귀) → Track R 생성기 스모크. [CI 성공(14초, `d84d0a4`)](https://github.com/jinsan02/qwen-llmops/actions/runs/36031245845).
 - **CD**: `.github/workflows/cd.yml` — 버전 태그(`v*`) 푸시 또는 수동 실행 시 **GHCR에 RPi5(arm64) 대상 이미지 빌드·푸시**.
   네이티브 ARM 러너(`ubuntu-24.04-arm`)로 `linux/arm64` 직접 빌드(QEMU 없음) + 이미지 내부 스모크
   (게이트 점수 + `inference.qwen_gguf` import + `llama_cpp` 로드).
@@ -257,7 +257,7 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
   등급분포(드리프트)·토큰 비용·보호자 피드백. RPi5 제약상 **opt-in 프로필** + 보존 7d/512MB 상한
   (선정 근거·대안 비교는 `docs/ops_runbook.md`).
   **기동 확인(2026-09-25, 개발 PC 도커)**: API·Redis·Prometheus·Grafana 4컨테이너, Prometheus 타깃 up,
-  대시보드 코드 프로비저닝 확인, 합성 스모크 60건(`scripts/monitoring_smoke.py`)으로 8패널 전부 값 표시.
+  대시보드 코드 프로비저닝 확인, 합성 스모크 60건(`scripts/monitoring_smoke.py`)으로 9패널 전부 값 표시.
   ![Grafana M5 대시보드](docs/img/grafana_m5_llmops_20260925.png)
   *합성 트래픽이며 운영 데이터가 아니다. latency는 같은 호스트의 rp5 스택과 CPU를 나눠 쓴 값이라 측정치로 쓰지 않는다.*
 - **거버넌스/롤백**: [`docs/ops_runbook.md`](docs/ops_runbook.md) — `SLM_MODEL` env 한 줄로 Q5↔Q4↔base 전환.
