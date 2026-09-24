@@ -21,14 +21,22 @@ jobs:
       - name: Syntax check
         run: |
           python -m py_compile \
-            inference/emergency_score.py inference/qwen_15b.py inference/qwen_gguf.py \
-            eval/eval_qwen_reasoning.py service/api.py \
+            inference/emergency_score.py inference/risk_policy.py inference/qwen_15b.py inference/qwen_gguf.py \
+            eval/eval_qwen_reasoning.py eval/eval_track_r.py service/api.py \
             scripts/gen_golden_set.py scripts/gen_golden_set_v2.py scripts/gen_golden_set_v3.py \
-            scripts/analyze_backends.py scripts/check_drift.py scripts/bench_latency.py
+            scripts/analyze_backends.py scripts/check_drift.py scripts/bench_latency.py scripts/monitoring_smoke.py
 
-      - name: 경계값 테스트 (emergency_score 60케이스 — 시계열 포함)
+      - name: M5 모듈 import (onnxruntime·llama_cpp 없이 — gguf 이미지 degraded 회귀 방지)
+        run: python -c "from inference.qwen_gguf import QwenLogic; from inference.risk_policy import rubric_level; print('import OK')"
+
+      - name: 경계값 테스트 (게이트·판정표 73케이스 — 시계열·rp5 동기화 포함)
         run: python tests/test_emergency_score.py
 
       - name: Eval 게이트 — Track A 회귀 (mock, 모델 불필요)
         # 골든셋 score 윈도우/ m5_called 회귀 시 exit 1 → CI 실패
         run: python eval/eval_qwen_reasoning.py --mock --golden data/qwen_golden_set.jsonl --report docs/
+
+      - name: Track R 생성기 스모크 (mock — rp5와 같은 seed면 운영 구간 98건)
+        run: |
+          python eval/eval_track_r.py --random 150 --seed 4047 --mock | tee track_r.txt
+          grep -q "운영 구간(게이트>=0.6): 98건" track_r.txt

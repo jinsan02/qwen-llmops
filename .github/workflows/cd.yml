@@ -61,8 +61,9 @@ jobs:
           docker run --rm --entrypoint python \
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest \
             -c "from inference.emergency_score import compute_emergency_score; \
+                from inference.qwen_gguf import QwenLogic; import llama_cpp; \
                 s,_ = compute_emergency_score({'vital':{'heart_rate':36,'breathing_rate':16}}); \
-                assert s >= 0.6, s; print('smoke OK score=%.2f' % s)"
+                assert s >= 0.6, s; print('smoke OK score=%.2f llama_cpp=%s' % (s, llama_cpp.__version__))"
 
       - name: 요약
         run: |

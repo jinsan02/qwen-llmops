@@ -4,7 +4,6 @@ import time
 from typing import Any
 
 import numpy as np
-import onnxruntime as ort
 
 
 def get_ort_providers():
@@ -19,7 +18,8 @@ def get_ort_providers():
 	return ["CPUExecutionProvider"]
 
 
-def get_session_opts() -> ort.SessionOptions:
+def get_session_opts():
+	import onnxruntime as ort  # 지연 import — numpy만 있는 환경(CI)에서도 safe_float 등 사용 가능
 	opts = ort.SessionOptions()
 	opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 	if os.getenv("ORT_USE_GPU", "0") == "1":

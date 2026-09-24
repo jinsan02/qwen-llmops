@@ -65,12 +65,14 @@ M1 (낙상)   M2 (생체신호+시계열)   M3 (환경음)   M4 (한국어 STT)
 qwen_llmops/
 ├── inference/
 │   ├── emergency_score.py   # 룰 게이트(M1-M4 통합 + 시계열 에스컬레이션)
+│   ├── risk_policy.py       # 판정표 rubric_level (rp5 동기화, Track R 정답)
 │   ├── qwen_15b.py          # M5: Qwen2.5-1.5B ONNX + 시계열 프롬프트·가드레일
 │   ├── qwen_gguf.py         # M5: GGUF(llama.cpp) 백엔드(qwen_15b 상속)
 │   ├── qwen_05b.py          # (구) 0.5B ONNX
 │   └── utils.py             # ORT 프로바이더·유틸
 ├── eval/
-│   └── eval_qwen_reasoning.py   # 평가 하니스 (Track A/B, 강건성, 토큰)
+│   ├── eval_qwen_reasoning.py   # 평가 하니스 (Track A/B, 강건성, 토큰)
+│   └── eval_track_r.py          # Track R — 판정표 준수율(운영 구간·seed held-out, rp5 방식)
 ├── data/
 │   └── qwen_golden_set.jsonl    # 1000 시계열 골든셋(clean 500 + noisy 500)
 ├── scripts/
@@ -78,13 +80,16 @@ qwen_llmops/
 │   ├── gen_golden_set_v2.py     # 스냅샷 노인분포 생성기
 │   ├── export_qwen_gguf.py      # fp32 → GGUF 변환
 │   ├── check_drift.py           # 운영 등급분포 드리프트 점검(Ops)
-│   └── bench_latency.py         # prefill/decode 분리 측정 + RPi5 투영
+│   ├── bench_latency.py         # prefill/decode 분리 측정 + RPi5 투영
+│   └── monitoring_smoke.py      # 모니터링 스모크 트래픽(합성) — 대시보드 재현용
 ├── service/
 │   ├── api.py               # FastAPI 서빙(/evaluate·/feedback·/health·/metrics)
 │   └── qwen_service.py      # Redis 스트림 소비 루프
 ├── docs/
 │   ├── model_card.md        # 배포 모델 명세
-│   └── ops_runbook.md       # 롤백·모니터링·드리프트 런북
+│   ├── ops_runbook.md       # 롤백·모니터링·드리프트 런북
+│   ├── evidence_matrix.md   # 주장별 근거 등급(구현/자동검증/합성평가/실기기)
+│   └── rp5_sync_20260925.md # rp5 M5 09-24 작업 동기화·검토 결과
 ├── .github/workflows/
 │   ├── ci.yml               # CI(경계테스트 + eval mock 게이트)
 │   └── cd.yml               # CD(태그 → GHCR arm64 이미지 빌드·푸시)
@@ -115,6 +120,9 @@ M1~M4 출력으로 응급지수(0.0~1.0)를 계산. 임계(0.6) 초과 시 M5 �
 **주요 보정**
 - **복합 위험 배율**: 활성 도메인(≥0.5) 2개→×1.20(피크≥0.90), 3개→×1.35, 4개→×1.50(피크≥0.70).
 - **Vital Bypass**: HR/RR 위기값 → score 최솟값 0.65.
+- **낙상 확정 우회**: M1 K/N 집계 성립(`fall_detected`) → score 최솟값 0.65. *(rp5 동기화)*
+- **긴급 음성 우회**: M4 긴급 문장 유사 매칭(`emergency_phrase_detected`) → score 최솟값 0.65. *(rp5 동기화)*
+  두 우회는 rp5 게이트와 무작위 입력 20,000건에서 점수·플래그 불일치 0 ([`docs/rp5_sync_20260925.md`](docs/rp5_sync_20260925.md)).
 - **Keyword+Fall 보너스**: 키워드 ≥1 AND fall_raw ≥0.25 → +0.15.
 - **시계열 에스컬레이션** *(신규)*: `compute_emergency_score(expert, time_series=...)` — 최근 20분
   warn-or-worse ≥0.6(지속 경고) 또는 HR/RR 악화 추세 → score floor 0.6. `time_series=None`이면
@@ -159,6 +167,9 @@ M1~M4 출력으로 응급지수(0.0~1.0)를 계산. 임계(0.6) 초과 시 M5 �
 ### Track A / Track B
 - **Track A** — 시스템 호출 결정(score≥0.6) vs 독립 오라클. 정확도/FPR/FNR.
 - **Track B** — 호출된 모델 raw 추론을 4기준(numeric_match·label_consistency·vital_override·format_complete)으로 채점.
+- **Track R** — 판정표(`inference/risk_policy.rubric_level`) 등급 준수율. 운영 구간(게이트≥0.6)만, seed 기반 무작위
+  케이스(rp5 생성기와 동일 — 같은 seed면 같은 케이스). **정답이 게이트 점수에서 출발하므로 판정 정확도가 아니라
+  판정표 준수율**이다. Track A/B와 섞어 해석하지 않는다.
 
 ### 실행
 ```bash
@@ -172,6 +183,10 @@ python eval/eval_qwen_reasoning.py --impl gguf \
 
 # base 1.5B fp32 (GPU)
 python eval/eval_qwen_reasoning.py --impl 15b --model volumes/models/qwen_15b --gpu ...
+
+# Track R — 판정표 준수율 (--mock이면 게이트·정답 분포만)
+python eval/eval_track_r.py --random 150 --seed 4047
+python eval/eval_track_r.py --random 300 --seed 5051 --m2-off   # M2 꺼짐(심박·호흡 미측정)
 ```
 
 ### 현재 성능 (1000 시계열셋)
@@ -180,7 +195,9 @@ python eval/eval_qwen_reasoning.py --impl 15b --model volumes/models/qwen_15b --
 | Track A 정확도 / FPR / FNR | **1.000 / 0.000 / 0.000** | **white-box 정책 일관성 점검** — 게이트와 오라클이 같은 정책을 공유. held-out·독립 라벨 아님 |
 | Track B raw (Q5) — **strict** | 317/328 = **0.966** | 저장된 raw reason을 기대 위기값 ±5% 기준으로 재채점 |
 | Track B raw (Q5) — **grounded** | 323/328 = **0.985** | raw dump의 `m5_pass`; strict + 다중 이상 vital 양가성 정합화(아래) |
-| 경계 단위테스트 `tests/test_emergency_score.py` | 60/60 PASS | `compute_emergency_score`의 **임계·로직 경계값 검증**. 임상 안전성 검증이 **아님** |
+| 경계 단위테스트 `tests/test_emergency_score.py` | 73/73 PASS | 게이트·판정표의 **임계·로직 경계값 검증**. 임상 안전성 검증이 **아님** |
+| Track R (Q5, seed 4047, M2 켬) — 모델만 | 77/98 = **0.786** | 판정표 준수율. 오답 전부 과대(warning→critical), 과소 0. rp5 짧은 프롬프트 77/98 재현 |
+| Track R (Q5, seed 5051, M2 꺼짐) — 모델만 | 70/102 = **0.686** | 과대 32 중 16건이 낙상 확정 단독 |
 
 **strict vs grounded 정의**
 - **strict** — 기대 위기값(예 HR=36)이 reason에 ±5%로 언급돼야 통과. 원본 dump에는 별도 필드가 없어 이번 감사에서 사후 재채점했다.
@@ -220,6 +237,10 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
   대시보드는 **코드로 프로비저닝**(`monitoring/grafana/dashboards/m5_llmops.json`) — M5 호출률·latency p50/p95·
   등급분포(드리프트)·토큰 비용·보호자 피드백. RPi5 제약상 **opt-in 프로필** + 보존 7d/512MB 상한
   (선정 근거·대안 비교는 `docs/ops_runbook.md`).
+  **기동 확인(2026-09-25, 개발 PC 도커)**: API·Redis·Prometheus·Grafana 4컨테이너, Prometheus 타깃 up,
+  대시보드 코드 프로비저닝 확인, 합성 스모크 60건(`scripts/monitoring_smoke.py`)으로 8패널 전부 값 표시.
+  ![Grafana M5 대시보드](docs/img/grafana_m5_llmops_20260925.png)
+  *합성 트래픽이며 운영 데이터가 아니다. latency는 같은 호스트의 rp5 스택과 CPU를 나눠 쓴 값이라 측정치로 쓰지 않는다.*
 - **거버넌스/롤백**: [`docs/ops_runbook.md`](docs/ops_runbook.md) — `SLM_MODEL` env 한 줄로 Q5↔Q4↔base 전환.
 - **드리프트**: `python scripts/check_drift.py` — 운영 `ai:emergency` 등급분포 vs baseline. *(스크립트 구현 완료; 실제 운영 스트림으로 돌린 실적은 없음 — baseline은 합성 골든셋 분포.)*
 
@@ -248,8 +269,12 @@ ORT 프로바이더 우선순위: `DmlExecutionProvider`(Windows DirectML) → `
 근거 등급 항목별 분리(구현 / 자동테스트 / 합성평가 / 실기기 / 미검증)는 [`docs/evidence_matrix.md`](docs/evidence_matrix.md).
 
 - **연구 성격**: 이 프로젝트는 **시스템·LLMOps 엔지니어링 연구**다. **의료기기 인증·임상시험·의학적 유효성 검증이 아니며**, 실제 응급 판단·환자 안전을 보장하지 않는다.
-- **합성 평가**: 모든 정량 수치는 **합성 골든셋(in-distribution)** 기반. held-out·실환자 데이터 없음 → 일반화 성능은 미검증.
+- **합성 평가**: 모든 정량 수치는 **합성 데이터** 기반. Track A/B는 프롬프트 튜닝에 쓴 골든셋(in-distribution)이고,
+  Track R은 튜닝에 쓰지 않은 seed(held-out)지만 역시 합성이다. 실환자 데이터 없음 → 실제 판정 정확도는 미검증.
 - **white-box 점검**: Track A 1.000은 게이트·오라클이 같은 정책을 공유하는 일관성 점검이며, 독립 라벨 성능이 아니다.
+- **판정표 순환성**: Track R 정답은 게이트 점수에서 출발하는 판정표라 **판정표 준수율**만 잰다. 판정표 자체의 타당성은 별개다
+  (예: 심박·호흡 위기 단독 → warning 규칙 — 의견은 [`docs/rp5_sync_20260925.md`](docs/rp5_sync_20260925.md) §4).
+- **LoRA 미진행**: 판정표 라벨로 1.5B를 파인튜닝하는 안은 향후 과제로 보류(근거는 같은 문서 §4 — 목표가 준수율이면 결정 함수로 충분).
 - **공개 원본 제한**: raw response dump는 `.gitignore`의 `reports/`에만 있어 공개 GitHub에서 직접 감사할 수 없다. 저장소에는 집계·SHA-256만 남긴다.
 - **실기기 미검증**: latency·메모리 수치는 개발 PC(x86). **RPi5(arm64) 실기 실측 로그 없음** — 배포는 "목표로 구성" 단계.
 - **운영 데이터 부재**: 피드백 루프·드리프트 점검은 **기능 구현 완료**이나 **실운영 스트림 실적 없음**.

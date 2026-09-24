@@ -73,7 +73,9 @@ services:
       - MODEL_PATH=/app/models
       - QWEN_GGUF_THREADS=4
     ports:
-      - "8000:8000"
+      # 같은 호스트에서 rp5(api :8000)와 함께 띄우면 API_PORT로 호스트 포트만 바꾼다.
+      # Prometheus는 도커 내부망에서 api:8000을 긁으므로 영향 없음.
+      - "${API_PORT:-8000}:8000"
     volumes:
       - ./volumes/models:/app/models
     command: ["uvicorn", "service.api:app", "--host", "0.0.0.0", "--port", "8000"]

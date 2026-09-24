@@ -323,6 +323,62 @@ s, bd = compute_emergency_score(_mk(hr=110), time_series=_ts([110] * 6))
 check("sparse(6행<10) → 시계열 무시, score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
 
 
+# ── [12] rp5 동기화 우회: 낙상 확정·긴급 음성 ────────────────────────────────
+print("[12] 낙상 확정·긴급 음성 우회 (rp5 동기화)")
+
+
+def expect(name, cond, detail=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        VERBOSE and print(f"  PASS  {name}")
+    else:
+        FAIL += 1
+        print(f"  FAIL  {name}  {detail}")
+
+
+er = _mk(fall=0.1); er["fall"]["fall_detected"] = True
+s, bd = compute_emergency_score(er)
+check("fall_detected 단독 → 낙상 확정 우회 score=0.65", s, bd, score_eq=0.65)
+expect("fall_consensus_bypass 플래그 set", bd.get("fall_consensus_bypass") is True, str(bd))
+
+s, bd = compute_emergency_score(_mk(fall=1.0))
+expect("fall_score=1.0이어도 fall_detected 없으면 우회 없음",
+       "fall_consensus_bypass" not in bd and s < 0.6, f"score={s:.4f}")
+
+er = _mk(); er["speech_ko"]["emergency_phrase_detected"] = True
+s, bd = compute_emergency_score(er)
+check("긴급 음성 단독 → 음성 우회 score=0.65", s, bd, score_eq=0.65)
+expect("voice_emergency_bypass 플래그 set", bd.get("voice_emergency_bypass") is True, str(bd))
+
+s, bd = compute_emergency_score(_mk(keywords=["도와"], stt_conf=1.0))
+expect("키워드만(긴급 음성 판정 없음) → 음성 우회 없음", "voice_emergency_bypass" not in bd, str(bd))
+
+
+# ── [13] 판정표(rubric v2) — rp5 rubric_level 동기화 ────────────────────────
+print("[13] 판정표 rubric_level")
+from inference.risk_policy import rubric_level
+
+expect("게이트<0.6 → normal", rubric_level(_mk(hr=36), 0.59)[0] == "normal")
+expect("게이트≥0.85 → critical ③", rubric_level(_mk(), 0.85)[0] == "critical")
+
+er = _mk(hr=36); er["fall"]["fall_detected"] = True
+expect("위기 vital + 낙상 확정 → critical ①", rubric_level(er, 0.65)[0] == "critical")
+
+er = _mk(label="alarm", conf=1.0); er["fall"]["fall_detected"] = True
+expect("낙상 확정 + 위험음 → critical ②", rubric_level(er, 0.65)[0] == "critical")
+
+er = _mk(); er["speech_ko"]["emergency_phrase_detected"] = True
+expect("긴급 음성 → critical ④", rubric_level(er, 0.65)[0] == "critical")
+
+er = _mk(); er["fall"]["fall_detected"] = True
+expect("낙상 확정 단독 → warning", rubric_level(er, 0.65)[0] == "warning")
+
+# 현행 정책 고정: 심박·호흡 동시 위기라도 다른 영역 신호가 없으면 warning (정책 논의 대상)
+expect("심박·호흡 동시 위기 단독 → warning (현행 정책)",
+       rubric_level(_mk(hr=36, rr=4), 0.65)[0] == "warning")
+
+
 # ── 결과 ────────────────────────────────────────────────────────────────────
 print()
 total = PASS + FAIL

@@ -4,7 +4,6 @@ import re
 import time
 import json
 import numpy as np
-import onnxruntime as ort
 
 from inference.utils import safe_float as _safe_float, stream_id_ts_ms as _stream_id_ts_ms
 
@@ -80,6 +79,9 @@ class QwenLogic:
     def _load_model(self, onnx_path, model_dir=None):
         """ONNX 모델 및 토크나이저 로드"""
         try:
+            # 지연 import — gguf-runtime 이미지는 onnxruntime이 없고, QwenGGUF가 이 클래스를 상속한다.
+            # 최상단 import였을 때 gguf 이미지에서 모델 로드가 실패해 M5가 degraded로 떨어졌다.
+            import onnxruntime as ort
             from inference.utils import get_ort_providers
             providers = get_ort_providers()
             session_opts = ort.SessionOptions()
@@ -325,7 +327,10 @@ class QwenLogic:
             if hc or hw:
                 ctx_note += f", 1h:c={hc},w={hw}"
 
-        line = (f"낙상:{fall_detected}({fall_score:.0%}),심박:{hr:.0f},호흡:{rr:.0f},"
+        # M2가 꺼지면 vital은 {} → 0을 그대로 적으면 모델이 심정지(hr=0)로 읽어 critical을 낸다. (rp5 동기화)
+        hr_s = f"{hr:.0f}" if hr > 0 else "미측정"
+        rr_s = f"{rr:.0f}" if rr > 0 else "미측정"
+        line = (f"낙상:{fall_detected}({fall_score:.0%}),심박:{hr_s},호흡:{rr_s},"
                 f"환경:{env_label},소견:{findings_str}{ctx_note}")
         return line
 
@@ -377,7 +382,8 @@ class QwenLogic:
 
     # instruct 모델용 multi-turn few-shot (각 예시를 user/assistant 턴으로)
     # 규칙 슬림(94a64f7): HR/RR 위기 2줄→1줄 병합 + 군더더기 제거. _SYSTEM 200→183토큰(Qwen 토크나이저 실측).
-    # 주의: 이 슬림은 시계열 개편에 번들돼 커밋됨 — 슬림 단독 Track B 전/후 A/B는 없음(무손실은 미검증).
+    # 로컬 로그(gitignore) 기준 슬림 전후 Track B 0.915→0.909(300→298/328, −2건) — 무손실 아님.
+    # 두 런 모두 커밋 사이 미커밋 상태라 그 사이 변경이 슬림뿐인지는 git으로 확정 불가.
     _SYSTEM = (
         "너는 독거노인 안전 모니터링 AI다. 센서 상태를 보고 위험도를 평가해 JSON 한 줄만 출력한다. "
         "예시를 반복하지 말고 입력으로 새로 판단한다.\n"
