@@ -7,7 +7,7 @@
 **RPi5(arm64) 배포를 목표로** **GGUF Q5_K_M**로 양자화·패키징했다.
 
 > 운영 흐름은 **개발(Dev) → 운영(Ops)** 전 주기를 단독 트랙으로: 평가 하니스 → 모델/양자화 →
-> 서빙 API → CI → 모니터링/피드백/거버넌스.
+> 서빙 API → CI/CD → 모니터링/피드백/거버넌스. 메인 시스템(rp5)과 게이트·판정표를 동기화해 같은 결과를 낸다.
 
 > ### ⚠️ 범위·근거 고지 (Scope & Evidence)
 > 이 저장소는 **시스템/LLMOps 엔지니어링 연구**다. **의료기기·임상 검증이 아니다.** 어떤 수치도
@@ -16,6 +16,18 @@
 > - **Track A 1.000은 white-box 정책 일관성 점검** — 게이트 임계와 평가 오라클이 같은 정책을 공유한다. held-out·독립 라벨 성능이 아니다.
 > - 저장된 latency는 **개발 PC(x86) 결과**다. **RPi5 실기 실측 로그는 아직 없음**(투영치만) → 상태는 "배포 완료"가 아니라 **"배포를 목표로 구성"**.
 > - **보호자 피드백·드리프트 점검은 기능 구현 완료**. 단, **실제 운영 데이터(`ai:emergency` 스트림)로 돌린 실적은 없음**(합성/스모크만).
+> - **Track R은 판정표 준수율**이다 — 정답이 게이트 점수에서 출발하는 규칙이라 실제 판정 정확도가 아니다.
+
+## 현재 상태 (2026-09-25)
+
+| 영역 | 상태 | 근거 |
+|---|---|---|
+| 룰 게이트 | 구현 · 경계 테스트 73/73 · rp5 게이트와 무작위 20,000건 불일치 0 | `tests/`, [rp5 동기화](docs/rp5_sync_20260925.md) |
+| M5 (Q5_K_M) Track B | strict **317/328** · grounded **323/328** (합성 시계열셋) | [현재 성능](#현재-성능-1000-시계열셋) |
+| M5 Track R (판정표 준수율) | M2 켬 **77/98** · M2 꺼짐 **70/102** — 오답 전부 과대 | `eval/eval_track_r.py` |
+| 서빙 · 모니터링 | 개발 PC 도커 기동 확인(API·Redis·Prometheus·Grafana), 8패널 값 표시 | [스크린샷](docs/img/grafana_m5_llmops_20260925.png) |
+| CI / CD | CI: 문법·M5 import·경계 테스트·Track A mock·Track R 스모크 / CD: arm64 이미지 → GHCR (`latest` 09-25 재빌드, M5 로드 결함 수정본) | `.github/workflows/` |
+| RPi5 실기 | **미측정** — 지연·메모리는 개발 PC 값뿐 | [근거 매트릭스](docs/evidence_matrix.md) |
 
 ---
 
@@ -27,6 +39,7 @@ M1 (낙상)   M2 (생체신호+시계열)   M3 (환경음)   M4 (한국어 STT)
                           │
               emergency_score.py            ← 룰 게이트 (score<0.6 → M5 스킵)
               · 도메인 가중 + 복합 보정       ← 시계열 에스컬레이션(지속경고/악화추세)
+              · 우회: 위기 vital·낙상 확정·긴급 음성·낙상+위험음 → 0.65
                           │  score ≥ 0.6
                    M5: Qwen2.5-1.5B          ← GGUF Q5_K_M(배포) / fp32·ONNX(기준)
                    · 시스템 규칙 + few-shot   ← 시계열 압축요약 프롬프트
@@ -37,7 +50,8 @@ M1 (낙상)   M2 (생체신호+시계열)   M3 (환경음)   M4 (한국어 STT)
 **설계 원칙**
 - M5(SLM)는 응급지수 임계(0.6) 초과 시에만 호출 — 불필요한 추론 비용 차단.
 - 이중 백엔드: **ONNX Runtime**(base 1.5B fp32, 0.5B) + **llama.cpp**(GGUF, 배포). M5는 컨테이너 격리.
-- 평가는 **Track A**(룰 게이트가 옳게 호출하는가)와 **Track B**(호출된 모델 raw 추론 품질)로 분리.
+- 평가는 **Track A**(룰 게이트가 옳게 호출하는가), **Track B**(호출된 모델 raw 추론 품질),
+  **Track R**(판정표 등급 준수율, rp5 방식)로 분리. 세 트랙은 정답의 출처가 달라 한 숫자로 합치지 않는다.
 - Redis Streams 비동기(`ai:result` → `ai:emergency`). 운영 설계상 데이터는 Redis만 사용하고 키 TTL은 ≤ 3600s로 제한한다.
 
 ---
@@ -92,7 +106,7 @@ qwen_llmops/
 │   └── rp5_sync_20260925.md # rp5 M5 09-24 작업 동기화·검토 결과
 ├── .github/workflows/
 │   ├── ci.yml               # CI(경계테스트 + eval mock 게이트)
-│   └── cd.yml               # CD(태그 → GHCR arm64 이미지 빌드·푸시)
+│   └── cd.yml               # CD(태그·수동 → GHCR arm64 이미지 빌드·푸시 + 이미지 내부 스모크)
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -226,9 +240,14 @@ SLM_BACKEND=gguf SLM_MODEL=qwen_15b_gguf_q5 MODEL_PATH=volumes/models \
 | `GET /docs` | 스키마 |
 
 - **CI**: `.github/workflows/ci.yml` — py_compile + 경계테스트 60(시계열 포함) + **eval mock 게이트(Track A 회귀)**, numpy만 설치. [CI #10 성공(13초)](https://github.com/jinsan02/qwen-llmops/actions/runs/29954017086).
-- **CD**: `.github/workflows/cd.yml` — 버전 태그(`v*`) 푸시 시 **GHCR에 RPi5(arm64) 대상 이미지 빌드·푸시**.
-  네이티브 ARM 러너(`ubuntu-24.04-arm`)로 `linux/arm64` 직접 빌드(QEMU 없음) + 임포트 스모크 테스트.
-  [CD #1](https://github.com/jinsan02/qwen-llmops/actions/runs/29953228399)에서 arm64 빌드·GHCR 푸시·이미지 내부 스모크가 성공했다. **RPi5 실기 `pull`·기동·실측은 미실시** — 아래 명령은 예정 절차.
+- **CD**: `.github/workflows/cd.yml` — 버전 태그(`v*`) 푸시 또는 수동 실행 시 **GHCR에 RPi5(arm64) 대상 이미지 빌드·푸시**.
+  네이티브 ARM 러너(`ubuntu-24.04-arm`)로 `linux/arm64` 직접 빌드(QEMU 없음) + 이미지 내부 스모크
+  (게이트 점수 + `inference.qwen_gguf` import + `llama_cpp` 로드).
+  - [CD #1](https://github.com/jinsan02/qwen-llmops/actions/runs/29953228399)(07-22) 이미지는 **M5 로드 실패 결함**이 있었다 —
+    `qwen_15b.py` 최상단 onnxruntime import. 당시 스모크는 게이트만 import해서 통과했다.
+  - [2026-09-25 재빌드](https://github.com/jinsan02/qwen-llmops/actions/runs/36030626271)로 `latest`를 교체했다
+    (강화한 스모크 통과: `smoke OK score=0.65 llama_cpp=0.3.35`).
+  **RPi5 실기 `pull`·기동·실측은 미실시** — 아래 명령은 예정 절차.
   ```bash
   # (예정) RPi5에서 배포본 받기 — 실기 검증 로그는 아직 없음
   docker pull ghcr.io/jinsan02/qwen-llmops:latest
