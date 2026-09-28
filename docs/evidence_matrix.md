@@ -28,6 +28,7 @@
 | M5 Qwen 추론 (GGUF Q5_K_M) | ✅ | ⚠️ | ✅ | ❌ | `inference/qwen_gguf.py` · 파싱만 단위검증. Track B grounded **323/328**, strict 재채점 **317/328** |
 | Track B 채점 (strict / grounded 분리) | ⚠️ | ❌ | ✅ | — | 코드는 grounded만 저장. strict는 raw reason 사후 재채점이며 별도 필드·자동 회귀테스트 없음 |
 | 프롬프트 압축 (system 슬림 + 시계열 요약) | ✅ | — | ⚠️ | — | **규칙 기반**(LLM/LLMLingua 미사용). `_SYSTEM` 200→183토큰(Qwen2.5 토크나이저, `94a64f7`, 규칙을 손으로 병합하고 군더더기 삭제). 같은 커밋에 `[1h추세]` 줄 추가가 묶여 있어 축소만 따로 본 A/B는 없다. 시계열 요약 `_series_prompt`는 규칙 기반(앞·뒤 25% 평균, 끝값, ±2 화살표, 경고 수)이며 예시 60행이 41토큰 |
+| 출력 필드 순서 A/B (reason-first) | ✅ | ❌ | ⚠️ | — | 출력은 answer-first. tokens=80 동일 조건에서 answer-first strict 0.966 vs reason-first 0.921 → 유지. reason-first는 놓친 위기 수치 7건을 잡았지만 다른 케이스 근거가 짧아져 format 실패 1→22. 로컬 원본(비공개): `reports/ab_A_current.json`, `reports/ab_B_reasonfirst.json`. 재채점 `scripts/rescore_ab.py` — 원본 dump만 보존 |
 | 골든셋 1000 시계열 | ✅ | — | ✅ | — | **전량 합성** `scripts/gen_golden_set_v3.py`(`random.gauss/randint`). 실환자·실측 아님 |
 | GGUF 크기·경계 서맥(HR=36/40) | ✅ | ❌ | ✅ | ❌ | `docs/model_card.md` 「백엔드 비교」 — Q5 0.988(회복) / Q4 0.976(미탐) / fp32 1.000 |
 | M5 추론 latency | ✅ | ❌ | — | ❌ | 개발 PC raw dump: 06-29 p50/p95 **1431.78/1757.67ms**, 06-30 **2535.10/3214.57ms**. 조건 메타데이터 부족, RPi5 아님 |
@@ -56,3 +57,8 @@
 Track B 건수·latency·원본 SHA-256은 [`metrics_summary.json`](metrics_summary.json)에 기록한다.
 strict 값은 기존 dump에 별도 필드로 저장되지 않았으므로 raw reason과 골든셋 기대값을 사후 재채점한 값이다.
 원본 dump는 로컬 `reports/`에 있고 Git에는 포함되지 않으므로, 공개 검증은 이 집계와 해시까지로 제한된다.
+
+프롬프트 최적화 단계값(로컬 로그 기준, 런별 코드 상태 미확인): 앵커 0.924 → 표기 0.960 → 순서 0.966 —
+`volumes/models/eval_q5_{anchor,salience,order}_1000.log`(비공개).
+
+커밋 `cc4c4a8` 제목의 "0.909→0.985"에서 0.985는 grounded 채점 완화값이다. strict 기준은 0.909→0.966.
