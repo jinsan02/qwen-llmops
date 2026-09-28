@@ -27,7 +27,7 @@
 | 시계열 에스컬레이션(지속경고/악화) | ✅ | ✅ | ✅ | ❌ | `emergency_score.py::_temporal_escalation` · test 섹션 [11] · 오라클 `ground_truth_temporal` |
 | M5 Qwen 추론 (GGUF Q5_K_M) | ✅ | ⚠️ | ✅ | ❌ | `inference/qwen_gguf.py` · 파싱만 단위검증. Track B grounded **323/328**, strict 재채점 **317/328** |
 | Track B 채점 (strict / grounded 분리) | ⚠️ | ❌ | ✅ | — | 코드는 grounded만 저장. strict는 raw reason 사후 재채점이며 별도 필드·자동 회귀테스트 없음 |
-| 프롬프트 압축 (system 슬림 + 시계열 요약) | ✅ | — | ⚠️ | — | **규칙기반**(LLM/LLMLingua 미사용). `_SYSTEM` 200→183토큰(Qwen 토크나이저 실측, 94a64f7 수작업 2줄→1줄 병합), 시계열요약 `_series_prompt` ~41토큰 vs raw 60행≈736. 슬림 전후 Track B **0.915→0.909(300→298/328, −2건)** — 로컬 로그 `volumes/models/eval_q5_ts_1000b.log`·`eval_q5_slim_1000.log`(gitignore, 비공개). **무손실 아님**; 두 런 사이 변경이 슬림뿐인지는 git으로 확정 불가 |
+| 프롬프트 압축 (system 슬림 + 시계열 요약) | ✅ | — | ⚠️ | — | **규칙 기반**(LLM/LLMLingua 미사용). `_SYSTEM` 200→183토큰(Qwen2.5 토크나이저, `94a64f7`, 규칙을 손으로 병합하고 군더더기 삭제). 같은 커밋에 `[1h추세]` 줄 추가가 묶여 있어 축소만 따로 본 A/B는 없다. 시계열 요약 `_series_prompt`는 규칙 기반(앞·뒤 25% 평균, 끝값, ±2 화살표, 경고 수)이며 예시 60행이 41토큰 |
 | 골든셋 1000 시계열 | ✅ | — | ✅ | — | **전량 합성** `scripts/gen_golden_set_v3.py`(`random.gauss/randint`). 실환자·실측 아님 |
 | GGUF 크기·경계 서맥(HR=36/40) | ✅ | ❌ | ✅ | ❌ | `docs/model_card.md` 「백엔드 비교」 — Q5 0.988(회복) / Q4 0.976(미탐) / fp32 1.000 |
 | M5 추론 latency | ✅ | ❌ | — | ❌ | 개발 PC raw dump: 06-29 p50/p95 **1431.78/1757.67ms**, 06-30 **2535.10/3214.57ms**. 조건 메타데이터 부족, RPi5 아님 |

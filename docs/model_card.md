@@ -40,7 +40,7 @@ M1~M4 전문가 출력 JSON(`fall`/`vital`/`env_sound`/`speech_ko`) + 선택 `ti
 > 투영치는 `scripts/bench_latency.py`의 `--project` 근사이며 실기 로그로 대체돼야 한다.
 
 > 집계·원본 파일 해시는 [`metrics_summary.json`](metrics_summary.json)에 기록했다.
-> 중간 프롬프트 실험의 0.909는 당시 HTML 보고서에는 있으나 현재 raw dump만으로 독립 재산출되지 않아 대표 수치에서 제외한다.
+> strict 0.909→0.966은 `cc4c4a8`(앵커·표기·순서 묶음) 전후 값이다(로컬 로그 기준). grounded 0.985는 채점 완화값이며 개선 수치가 아니다.
 
 ## Track R — 판정표 준수율 (2026-09-25, rp5 동기화 후)
 정답 = `inference/risk_policy.rubric_level`(게이트 점수에서 출발) → **판정 정확도가 아니라 판정표 준수율**.

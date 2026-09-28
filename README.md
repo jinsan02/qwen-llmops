@@ -217,9 +217,9 @@ python eval/eval_track_r.py --random 300 --seed 5051 --m2-off   # M2 꺼짐(심�
 - **strict** — 기대 위기값(예 HR=36)이 reason에 ±5%로 언급돼야 통과. 원본 dump에는 별도 필드가 없어 이번 감사에서 사후 재채점했다.
 - **grounded** — 현재 코드 `eval/eval_qwen_reasoning.py::_score_numeric_match`의 기준. strict 실패라도 모델이 **입력의 이상 vital을 인용**하고 **등급을 warning↑로 상향**했으면 인정한다. 정상 다운그레이드·입력에 없는 숫자는 실패한다.
 
-> **프롬프트 최적화** (연구 기반: 시계열 끝값 스냅샷 앵커, 위기 vital salience·severity 정렬):
+> **프롬프트 최적화** (커밋 `cc4c4a8`): 시계열 끝값 앵커, 위기 vital 표기(`이상`→`위기`), 소견 한 줄 안에서 위기를 경고 앞에 정렬 — 세 변경을 한 커밋에 넣어 strict **0.909→0.966**. 세 변경 각각의 몫은 분리되지 않는다(로컬 로그 기준 단계값 0.924→0.960→0.966).
 > 최종 저장 raw 기준 **0.966(strict, 317/328)** / **0.985(grounded, 323/328)**. 프롬프트 토큰 p50 772.
-> 중간 프롬프트 실험의 0.909 값은 당시 HTML 보고서에는 남아 있지만 현재 raw dump만으로 독립 재산출할 수 없어, 대표 성능 주장에서는 제외한다.
+> grounded 0.985는 채점 기준을 완화한 값이며 개선 수치가 아니다.
 > 집계와 원본 해시는 [`docs/metrics_summary.json`](docs/metrics_summary.json). 전부 개발 PC(x86) 측정이며 RPi5 실측이 아니다.
 
 ---
